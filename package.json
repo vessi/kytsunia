@@ -1,0 +1,19 @@
+{
+  "name": "kytsunia",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "ts-node ./src/index.ts",
+    "dev": "ts-node-dev ./src/index.ts"
+  },
+  "dependencies": {
+    "grammy": "^1.20.1"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.3"
+  }
+}
