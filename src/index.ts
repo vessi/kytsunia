@@ -6,6 +6,8 @@ const bot = new Bot(process.env.BOT_TOKEN ?? "")
 
 const dynamicRules : Rule[] = []
 
+const insults = JSON.parse(readFileSync("insults.json", "utf-8"));
+
 const rulesText = readFileSync("rules.json", "utf-8");
 JSON.parse(rulesText).forEach((rule: { regex: string, type: string, fileId: string }) => {
   switch (rule.type) {
@@ -18,19 +20,25 @@ JSON.parse(rulesText).forEach((rule: { regex: string, type: string, fileId: stri
 })
 
 const fixedRules = [
-  (new Rule(/Кицюня!/, (ctx) => { ctx.react("🤔") })),
-  (new Rule(/Кицюня, ти людина чи компʼютер\?/, (ctx) => {
+  (new Rule(/(К|к)ицюн(я|ю)!/, (ctx) => { ctx.react("🤔") })),
+  (new Rule(/(К|к)ицюн(я|ю), ти людина чи компʼютер\?/, (ctx) => {
     const message_id = ctx.message?.message_id;
     ctx.reply("Я компʼютер!", { reply_to_message_id: message_id })
   })),
-  (new Rule(/Кицюня, де тривога?/, (ctx) => {
+  (new Rule(/(К|к)ицюн(я|ю), де тривога?/, (ctx) => {
     const alerts = new URL("https://alerts.com.ua/map.png");
     const alertsFile = new InputFile(alerts, "alerts.png");
     if (ctx.chat) {
       ctx.api.sendPhoto(ctx.chat.id, alertsFile);
     }
   })),
-  (new Rule(/Кицюня, запиши як (.*)\.гіф/, (ctx, rule) => {
+  (new Rule(/(К|к)ицюн(я|ю), виховуй/, (ctx) => {
+    const reply_id = ctx.message?.reply_to_message?.message_id ?? ctx.message?.message_id
+    // Select random insult from insults array and reply to the message
+    const insult = insults[Math.floor(Math.random() * insults.length)];
+    ctx.reply(insult, { reply_to_message_id: reply_id });
+  })),
+  (new Rule(/(К|к)ицюн(я|ю), запиши як (.*)\.гіф/, (ctx, rule) => {
     const message = ctx.message?.text;
     const match = rule.regex.exec(message ?? "");
     const gifName = match?.[1];
@@ -41,7 +49,7 @@ const fixedRules = [
       ctx.reply(`Записала як ${gifName}`, { reply_to_message_id: ctx.message?.message_id });
     }
   })),
-  (new Rule(/Кицюня, запиши як (.*)\.стікер/, (ctx, rule) => {
+  (new Rule(/(К|к)ицюн(я|ю), запиши як (.*)\.стікер/, (ctx, rule) => {
     const message = ctx.message?.text;
     const match = rule.regex.exec(message ?? "");
     const gifName = match?.[1];
@@ -52,7 +60,7 @@ const fixedRules = [
       ctx.reply(`Записала як ${gifName}`, { reply_to_message_id: ctx.message?.message_id });
     }
   })),
-  (new Rule(/Кицюня, забудь (.*)\.гіф/, (ctx, rule) => {
+  (new Rule(/(К|к)ицюн(я|ю), забудь (.*)\.гіф/, (ctx, rule) => {
     const message = ctx.message?.text;
     const match = rule.regex.exec(message ?? "");
     const oldRule = dynamicRules.find((rule) => rule.regex.source === `${match?.[1]}.гіф`);
@@ -63,7 +71,7 @@ const fixedRules = [
       ctx.reply("Забула", { reply_to_message_id: ctx.message?.message_id })
     }
   })),
-  (new Rule(/Кицюня, забудь (.*)\.стікер/, (ctx, rule) => {
+  (new Rule(/(К|к)ицюн(я|ю), забудь (.*)\.стікер/, (ctx, rule) => {
     const message = ctx.message?.text;
     const match = rule.regex.exec(message ?? "");
     const oldRule = dynamicRules.find((rule) => rule.regex.source === `${match?.[1]}.стікер`);
@@ -74,7 +82,7 @@ const fixedRules = [
       ctx.reply("Забула", { reply_to_message_id: ctx.message?.message_id })
     }
   })),
-  (new Rule(/Кицюня, які знаєш гіфки\?/, (ctx) => {
+  (new Rule(/(К|к)ицюн(я|ю), які знаєш гіфки\?/, (ctx) => {
     const gifs = dynamicRules.filter((rule) => rule.meta.type === "gif").map((rule) => rule.regex.source.replace(".гіф", ""));
     const gifsList = gifs.join("\n");
     if (gifsList === "") {
@@ -83,7 +91,7 @@ const fixedRules = [
     }
     ctx.reply(gifsList, { reply_to_message_id: ctx.message?.message_id });
   })),
-  (new Rule(/Кицюня, які знаєш стікери\?/, (ctx) => {
+  (new Rule(/(К|к)ицюн(я|ю), які знаєш стікери\?/, (ctx) => {
     const stickers = dynamicRules.filter((rule) => rule.meta.type === "sticker").map((rule) => rule.regex.source.replace(".стікер", ""));
     const stickersList = stickers.join("\n");
     if (stickersList === "") {
@@ -92,7 +100,7 @@ const fixedRules = [
     }
     ctx.reply(stickersList, { reply_to_message_id: ctx.message?.message_id });
   })),
-  (new Rule(/Кицюня, запишись!/, (ctx) => {
+  (new Rule(/(К|к)ицюн(я|ю), запишись!/, (ctx) => {
     const ruleSet : { regex: string; type: string; fileId: string; }[] = [];
     dynamicRules.forEach((rule) => {
       ruleSet.push({ regex: rule.regex.source, type: rule.meta.type, fileId: rule.meta.fileId });
@@ -101,15 +109,13 @@ const fixedRules = [
     writeFileSync("rules.json", ruleSetString);
     ctx.reply("Записалась!", { reply_to_message_id: ctx.message?.message_id });
   })),
-  (new Rule(/Кицюня, список!/, (ctx) => {
+  (new Rule(/(К|к)ицюн(я|ю), список!/, (ctx) => {
     const list = fixedRules.concat(dynamicRules).map((rule) => rule.regex.source).join("\n");
     ctx.reply(list, { reply_to_message_id: ctx.message?.message_id });
   }))
 ]
 
 bot.on("message", async (ctx) => {
-  console.log(ctx);
-  console.log(ctx.message);
   const rule = fixedRules.concat(dynamicRules).find((rule) => rule.check(ctx?.message?.text ?? ""));
   rule?.execute(ctx);
   return;
