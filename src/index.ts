@@ -41,7 +41,7 @@ const fixedRules = [
   (new Rule(/(К|к)ицюн(я|ю), запиши як (.*)\.гіф/, (ctx, rule) => {
     const message = ctx.message?.text;
     const match = rule.regex.exec(message ?? "");
-    const gifName = match?.[1];
+    const gifName = match?.[3];
     const gif = ctx.message?.reply_to_message?.animation?.file_id;
     if (gif && gifName) {
       const newRule = new Rule(new RegExp(`${gifName}\.гіф`), (ctx) => { ctx.api.sendAnimation(ctx.chat?.id ?? 0, gif) }, { type: "gif", fileId: gif });
@@ -52,7 +52,7 @@ const fixedRules = [
   (new Rule(/(К|к)ицюн(я|ю), запиши як (.*)\.стікер/, (ctx, rule) => {
     const message = ctx.message?.text;
     const match = rule.regex.exec(message ?? "");
-    const gifName = match?.[1];
+    const gifName = match?.[3];
     const gif = ctx.message?.reply_to_message?.sticker?.file_id;
     if (gif && gifName) {
       const newRule = new Rule(new RegExp(`${gifName}\.стікер`), (ctx) => { ctx.api.sendSticker(ctx.chat?.id ?? 0, gif) }, { type: "sticker", fileId: gif });
@@ -63,7 +63,7 @@ const fixedRules = [
   (new Rule(/(К|к)ицюн(я|ю), забудь (.*)\.гіф/, (ctx, rule) => {
     const message = ctx.message?.text;
     const match = rule.regex.exec(message ?? "");
-    const oldRule = dynamicRules.find((rule) => rule.regex.source === `${match?.[1]}.гіф`);
+    const oldRule = dynamicRules.find((rule) => rule.regex.source === `${match?.[3]}.гіф`);
     if (!oldRule) {
       ctx.reply("Такого правила немає", { reply_to_message_id: ctx.message?.message_id })
     } else {
@@ -74,7 +74,7 @@ const fixedRules = [
   (new Rule(/(К|к)ицюн(я|ю), забудь (.*)\.стікер/, (ctx, rule) => {
     const message = ctx.message?.text;
     const match = rule.regex.exec(message ?? "");
-    const oldRule = dynamicRules.find((rule) => rule.regex.source === `${match?.[1]}.стікер`);
+    const oldRule = dynamicRules.find((rule) => rule.regex.source === `${match?.[3]}.стікер`);
     if (!oldRule) {
       ctx.reply("Такого правила немає", { reply_to_message_id: ctx.message?.message_id })
     } else {
