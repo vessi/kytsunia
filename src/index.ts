@@ -20,8 +20,21 @@ JSON.parse(rulesText).forEach((rule: { regex: string, type: string, fileId: stri
   }
 })
 
-const debouncedReply = debounce((ctx) => {
-  ctx.replyWithAnimation("CgACAgIAAxkBAAMyZhvcglG35KbZrvNN8k70TELlRfoAAuQtAAJQ3LlJOsR-fNtFEyU0BA", { reply_to_message_id: ctx.message?.message_id });
+const debouncedReply = debounce((ctx, mode, id) => {
+  switch (mode) {
+    case "gif":
+      ctx.replyWithAnimation(id, {
+        reply_to_message_id: ctx.message?.message_id
+      });
+      break;
+    case "sticker":
+      ctx.replyWithSticker(id, {
+        reply_to_message_id: ctx.message?.message_id
+      });
+      break;
+    default:
+      break;
+  }
 }, 1000)
 
 setInterval(() => {
@@ -121,15 +134,26 @@ const fixedRules = [
     const list = fixedRules.concat(dynamicRules).map((rule) => rule.regex.source).join("\n");
     ctx.reply(list, { reply_to_message_id: ctx.message?.message_id });
   })),
-  (new Rule(/.*/, (ctx) => {
-    console.log(ctx.message);
-    if ((ctx.message?.forward_origin?.type === "channel") && (ctx.message?.forward_origin?.chat.id == -1001049320233)) {
-      debouncedReply(ctx);
-    }
-  }))
 ]
 
 bot.on("message", async (ctx) => {
+  console.log(ctx.message);
+  if (ctx.message?.forward_origin?.type === "channel") {
+    switch (ctx.message?.forward_origin?.chat.id) {
+      case -1001049320233:
+        debouncedReply(ctx, "gif", "CgACAgIAAxkBAAMyZhvcglG35KbZrvNN8k70TELlRfoAAuQtAAJQ3LlJOsR-fNtFEyU0BA");
+        break;
+      case -1001360737249:
+        debouncedReply(ctx, "sticker", "CAACAgIAAxkBAANPZhwqWMsNeI3blUQrTDxXWxGj-TEAAtVAAAJlqAhLXy-cMxg3dys0BA");
+        break;
+      case -1001536630827:
+        debouncedReply(ctx, "sticker", "CAACAgIAAxkBAANUZhwsDlXK63Vp3pbvT7PZfNh1QVIAApBGAAKP5ghI6Q_53Kwo-Ug0BA");
+        break;
+      default:
+        break;
+    }
+    return;
+  };
   const rule = fixedRules.concat(dynamicRules).find((rule) => rule.check(ctx?.message?.text ?? ""));
   rule?.execute(ctx);
   return;
