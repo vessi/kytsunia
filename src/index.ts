@@ -1,6 +1,7 @@
 import { Bot, InputFile } from "grammy";
 import { Rule } from "./rule";
 import { readFileSync, writeFileSync } from "fs";
+import { debounce } from "ts-debounce";
 
 const bot = new Bot(process.env.BOT_TOKEN ?? "")
 
@@ -18,6 +19,10 @@ JSON.parse(rulesText).forEach((rule: { regex: string, type: string, fileId: stri
       dynamicRules.push(new Rule(new RegExp(rule.regex), (ctx) => { ctx.api.sendSticker(ctx.chat?.id ?? 0, rule.fileId) }, { type: "sticker", fileId: rule.fileId }));
   }
 })
+
+const debouncedReply = debounce((ctx) => {
+  ctx.replyWithAnimation("CgACAgIAAxkBAAMyZhvcglG35KbZrvNN8k70TELlRfoAAuQtAAJQ3LlJOsR-fNtFEyU0BA", { reply_to_message_id: ctx.message?.message_id });
+}, 1000)
 
 const fixedRules = [
   (new Rule(/(К|к)ицюн(я|ю)!/, (ctx) => { ctx.react("🤔") })),
@@ -112,6 +117,12 @@ const fixedRules = [
   (new Rule(/(К|к)ицюн(я|ю), список!/, (ctx) => {
     const list = fixedRules.concat(dynamicRules).map((rule) => rule.regex.source).join("\n");
     ctx.reply(list, { reply_to_message_id: ctx.message?.message_id });
+  })),
+  (new Rule(/.*/, (ctx) => {
+    console.log(ctx.message);
+    if ((ctx.message?.forward_origin?.type === "channel") && (ctx.message?.forward_origin?.chat.id == -1001049320233)) {
+      debouncedReply(ctx);
+    }
   }))
 ]
 
