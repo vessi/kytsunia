@@ -24,6 +24,15 @@ const debouncedReply = debounce((ctx) => {
   ctx.replyWithAnimation("CgACAgIAAxkBAAMyZhvcglG35KbZrvNN8k70TELlRfoAAuQtAAJQ3LlJOsR-fNtFEyU0BA", { reply_to_message_id: ctx.message?.message_id });
 }, 1000)
 
+setInterval(() => {
+  const ruleSet : { regex: string; type: string; fileId: string; }[] = [];
+  dynamicRules.forEach((rule) => {
+    ruleSet.push({ regex: rule.regex.source, type: rule.meta.type, fileId: rule.meta.fileId });
+  })
+  const ruleSetString = JSON.stringify(ruleSet);
+  writeFileSync("rules.json", ruleSetString);
+}, 5000);
+
 const fixedRules = [
   (new Rule(/(К|к)ицюн(я|ю)!/, (ctx) => { ctx.react("🤔") })),
   (new Rule(/(К|к)ицюн(я|ю), ти людина чи компʼютер\?/, (ctx) => {
@@ -106,13 +115,7 @@ const fixedRules = [
     ctx.reply(stickersList, { reply_to_message_id: ctx.message?.message_id });
   })),
   (new Rule(/(К|к)ицюн(я|ю), запишись!/, (ctx) => {
-    const ruleSet : { regex: string; type: string; fileId: string; }[] = [];
-    dynamicRules.forEach((rule) => {
-      ruleSet.push({ regex: rule.regex.source, type: rule.meta.type, fileId: rule.meta.fileId });
-    })
-    const ruleSetString = JSON.stringify(ruleSet);
-    writeFileSync("rules.json", ruleSetString);
-    ctx.reply("Записалась!", { reply_to_message_id: ctx.message?.message_id });
+    ctx.reply("Дядя, ти дурак? Автоматично зберігаюсь вже", { reply_to_message_id: ctx.message?.message_id });
   })),
   (new Rule(/(К|к)ицюн(я|ю), список!/, (ctx) => {
     const list = fixedRules.concat(dynamicRules).map((rule) => rule.regex.source).join("\n");
