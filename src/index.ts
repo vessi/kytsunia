@@ -1,15 +1,15 @@
 import { Bot, InputFile } from "grammy";
-import { Rule } from "./rule";
 import { readFileSync, writeFileSync } from "fs";
 import { debounce } from "ts-debounce";
+import { Rule } from "./rule";
 
 const bot = new Bot(process.env.BOT_TOKEN ?? "")
 
 const dynamicRules : Rule[] = []
 
 const insults = JSON.parse(readFileSync("insults.json", "utf-8"));
-
 const rulesText = readFileSync("rules.json", "utf-8");
+
 JSON.parse(rulesText).forEach((rule: { regex: string, type: string, fileId: string }) => {
   switch (rule.type) {
     case "gif":
@@ -64,6 +64,13 @@ const fixedRules = [
     // Select random insult from insults array and reply to the message
     const insult = insults[Math.floor(Math.random() * insults.length)];
     ctx.reply(insult, { reply_to_message_id: reply_id });
+  })),
+  (new Rule(/(К|к)ицюн(я|ю), скажи в (-\d*) (.*)/, async (ctx, rule) => {
+    const message = ctx.message?.text;
+    const match = rule.regex.exec(message?? "");
+    const chat_id = match?.[3];
+    const what_to_say = match?.[4];
+    await bot.api.sendMessage(chat_id ?? 0, what_to_say ?? "");
   })),
   (new Rule(/(К|к)ицюн(я|ю), запиши як (.*)\.гіф/, (ctx, rule) => {
     const message = ctx.message?.text;
