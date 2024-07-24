@@ -141,6 +141,22 @@ const fixedRules = [
     const list = fixedRules.concat(dynamicRules).map((rule) => rule.regex.source).join("\n");
     ctx.reply(list, { reply_to_message_id: ctx.message?.message_id });
   })),
+  (new Rule(/https:\/\/(www\.)?instagram.com\/(.*)\/?/, (ctx, rule) => {
+    const message = ctx.message?.text;
+    const match = rule.regex.exec(message ?? "");
+    if (match === null) {
+      return;
+    }
+    ctx.reply(`https://ddinstagram.com/${match[2]}`, { reply_to_message_id: ctx.message?.message_id });
+  })),
+  (new Rule(/https:\/\/(www\.)?(x|twitter).com\/(.*)\/?/, (ctx, rule) => {
+    const message = ctx.message?.text;
+    const match = rule.regex.exec(message ?? "");
+    if (match === null) {
+      return;
+    }
+    ctx.reply(`https://fxtwitter.com/${match[3]}`, { reply_to_message_id: ctx.message?.message_id });
+  })),
 ]
 
 bot.on("message", async (ctx) => {
