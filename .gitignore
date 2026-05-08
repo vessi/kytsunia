@@ -1,4 +1,10 @@
 node_modules
-rules.json
 dist
+data/*.db
+data/*.db-shm
+data/*.db-wal
+.env
+.env.local
+*.log
+rules.json
 .vscode

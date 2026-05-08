@@ -1,0 +1,29 @@
+import { z } from "zod";
+
+// Node's --env-file parses KEY= as { KEY: "" }, not undefined.
+// Treat empty string as "absent" so optional/default behave correctly.
+const envValue = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((v) => (v === "" ? undefined : v), schema);
+
+const envSchema = z.object({
+  BOT_TOKEN: envValue(z.string().min(1, "BOT_TOKEN is required")),
+  ADMIN_USER_ID: envValue(z.coerce.number().int().positive()),
+  ANTHROPIC_API_KEY: envValue(z.string().min(1).optional()),
+  DB_PATH: envValue(z.string().default("./data/kytsunia.db")),
+  LOG_LEVEL: envValue(z.enum(["debug", "info", "warn", "error"]).default("info")),
+  NODE_ENV: envValue(z.enum(["development", "production", "test"]).default("development")),
+});
+
+export type Config = z.infer<typeof envSchema>;
+
+export function loadConfig(): Config {
+  const parsed = envSchema.safeParse(process.env);
+  if (!parsed.success) {
+    console.error("Invalid configuration:");
+    for (const [key, errors] of Object.entries(parsed.error.flatten().fieldErrors)) {
+      console.error(`  ${key}: ${(errors ?? []).join(", ")}`);
+    }
+    process.exit(1);
+  }
+  return parsed.data;
+}
