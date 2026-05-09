@@ -3,8 +3,10 @@ dist
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/persona-evals/runs
 .env
 .env.local
 *.log
 rules.json
 .vscode
+.DS_Store

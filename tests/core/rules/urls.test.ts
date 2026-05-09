@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { rewriteInstagramUrl, rewriteXUrl } from "../../../src/core/rules/urls.js";
+import {
+  matchUrlRewrites,
+  rewriteInstagramUrl,
+  rewriteXUrl,
+} from "../../../src/core/rules/urls.js";
+import type { MessageInput } from "../../../src/core/types.js";
 
 describe("rewriteInstagramUrl", () => {
   it("rewrites a bare instagram link", () => {
@@ -37,6 +42,10 @@ describe("rewriteInstagramUrl", () => {
     // Так, "тут смішно" потрапить у вихідний URL.
     // Це не баг рефакторингу, а збережена поведінка.
   });
+
+  it("does not match instagrammcom (escape fix)", () => {
+    expect(rewriteInstagramUrl("https://instagrammcom/p/abc")).toBeNull();
+  });
 });
 
 describe("rewriteXUrl", () => {
@@ -64,5 +73,39 @@ describe("rewriteXUrl", () => {
 
   it("returns null for non-x url", () => {
     expect(rewriteXUrl("https://facebook.com/foo")).toBeNull();
+  });
+});
+
+function buildInput(text: string, messageId = 1): MessageInput {
+  return {
+    text,
+    messageId,
+    chatId: 1,
+    senderId: 1,
+    senderName: "x",
+    ts: 0,
+    kind: "text",
+  };
+}
+
+describe("matchUrlRewrites", () => {
+  it("wraps instagram rewrite in reply_text action", () => {
+    const result = matchUrlRewrites(buildInput("https://instagram.com/p/abc", 42));
+    expect(result?.[0]?.kind).toBe("reply_text");
+    if (result?.[0]?.kind === "reply_text") {
+      expect(result[0].text).toBe("https://ddinstagram.com/p/abc");
+      expect(result[0].replyTo).toBe(42);
+    }
+  });
+
+  it("wraps x rewrite in reply_text action", () => {
+    const result = matchUrlRewrites(buildInput("https://x.com/u/status/1"));
+    if (result?.[0]?.kind === "reply_text") {
+      expect(result[0].text).toBe("https://fxtwitter.com/u/status/1");
+    }
+  });
+
+  it("returns null for unrelated text", () => {
+    expect(matchUrlRewrites(buildInput("просто текст"))).toBeNull();
   });
 });

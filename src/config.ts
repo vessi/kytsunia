@@ -7,11 +7,15 @@ const envValue = <T extends z.ZodTypeAny>(schema: T) =>
 
 const envSchema = z.object({
   BOT_TOKEN: envValue(z.string().min(1, "BOT_TOKEN is required")),
-  ADMIN_USER_ID: envValue(z.coerce.number().int().positive()),
-  ANTHROPIC_API_KEY: envValue(z.string().min(1).optional()),
+  ADMIN_USER_ID: envValue(z.coerce.number().int().positive().optional()),
+  ANTHROPIC_API_KEY: envValue(z.string().min(1, "ANTHROPIC_API_KEY is required for LLM features")),
   DB_PATH: envValue(z.string().default("./data/kytsunia.db")),
   LOG_LEVEL: envValue(z.enum(["debug", "info", "warn", "error"]).default("info")),
   NODE_ENV: envValue(z.enum(["development", "production", "test"]).default("development")),
+  // LLM-настройки
+  DEFAULT_DAILY_LLM_LIMIT: envValue(z.coerce.number().int().positive().default(15)),
+  GLOBAL_DAILY_LLM_CAP: envValue(z.coerce.number().int().positive().default(150)),
+  LLM_MODEL: envValue(z.string().default("claude-haiku-4-5-20251001")),
 });
 
 export type Config = z.infer<typeof envSchema>;

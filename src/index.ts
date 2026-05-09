@@ -1,8 +1,18 @@
 import { Bot } from "grammy";
 import { loadConfig } from "./config.js";
+import { match } from "./core/matcher.js";
+import type { State } from "./core/types.js";
+import { loadInsults } from "./shell/insults.js";
+import { makeLlmClient } from "./shell/llm/anthropic.js";
+import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
+import { PERSONA_PROMPT } from "./shell/llm/persona.js";
 import { createLogger } from "./shell/logger.js";
 import { openDb } from "./shell/storage/db.js";
-import { toMessageInput } from "./shell/telegram.js";
+import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
+import { makeMessageAppender } from "./shell/storage/messages.js";
+import { makeRegularsStore } from "./shell/storage/regulars.js";
+import { makeDynamicRuleStore } from "./shell/storage/rules.js";
+import { executeActions, toMessageInput } from "./shell/telegram.js";
 
 const config = loadConfig();
 const log = createLogger(config);
@@ -10,26 +20,90 @@ const log = createLogger(config);
 log.info({ env: config.NODE_ENV }, "kytsunia starting");
 
 const db = openDb(config.DB_PATH, log);
+const llmCallStore = makeLlmCallStore(db);
+const regularsStore = makeRegularsStore(db);
 log.info({ dbPath: config.DB_PATH }, "database opened");
+log.info({ count: regularsStore.list().length }, "regulars loaded");
+
+const insults = loadInsults("./data/insults.json", log);
+log.info({ count: insults.length }, "insults loaded");
+
+const dynamicRuleStore = makeDynamicRuleStore(db, log);
+const appendMessage = makeMessageAppender(db);
+
+const llmClient = makeLlmClient(config.ANTHROPIC_API_KEY);
+
+const invokeLlmDeps: InvokeLlmDeps = {
+  llmClient,
+  llmCallStore,
+  db,
+  model: config.LLM_MODEL,
+  persona: PERSONA_PROMPT,
+  defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
+  globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
+  recentContextSize: 10,
+  profilesLimit: 5,
+  regularsStore,
+  rng: Math.random,
+  log,
+};
+
+log.info({ model: config.LLM_MODEL }, "llm client ready");
 
 const bot = new Bot(config.BOT_TOKEN);
+
+try {
+  await bot.init();
+} catch (err) {
+  if (err instanceof Error && err.message.includes("getMe")) {
+    log.error({ msg: err.message }, "bot failed to authenticate, check BOT_TOKEN");
+  } else {
+    log.error({ err }, "bot init failed");
+  }
+  db.close();
+  process.exit(1);
+}
+
+const botUserId = bot.botInfo.id;
+log.info({ username: bot.botInfo.username, id: botUserId }, "bot info loaded");
 
 bot.on("message", async (ctx) => {
   const input = toMessageInput(ctx);
   if (!input) return;
 
+  appendMessage(input);
+
   log.debug(
     {
-      chatId: input.chatId,
-      msgId: input.messageId,
-      sender: input.senderName,
-      kind: input.kind,
-      hasReply: !!input.replyTo,
-      hasForward: !!input.forwardOrigin,
-      textPreview: input.text.slice(0, 60),
+      /* ... */
     },
     "message received",
   );
+
+  const state: State = {
+    dynamic: dynamicRuleStore.list(),
+    policy: {
+      ...(config.ADMIN_USER_ID !== undefined ? { adminUserId: config.ADMIN_USER_ID } : {}),
+      botUserId,
+    },
+  };
+
+  const actions = match(input, state);
+  if (actions && actions.length > 0) {
+    log.debug({ actions: actions.map((a) => a.kind) }, "actions produced");
+    try {
+      await executeActions(actions, ctx, {
+        insults,
+        rng: Math.random,
+        dynamicRuleStore,
+        llmCallStore,
+        defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
+        invokeLlmDeps,
+      });
+    } catch (err) {
+      log.error({ err: err instanceof Error ? err.message : err }, "action execution failed");
+    }
+  }
 });
 
 bot.catch((err) => {
@@ -48,14 +122,10 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 try {
   await bot.start({
-    onStart: (info) => log.info({ username: info.username, id: info.id }, "bot started"),
+    onStart: (info) => log.info({ username: info.username, id: info.id }, "bot polling started"),
   });
 } catch (err) {
-  if (err instanceof Error && err.message.includes("getMe")) {
-    log.error({ msg: err.message }, "bot failed to authenticate, check BOT_TOKEN");
-  } else {
-    log.error({ err }, "bot failed to start");
-  }
+  log.error({ err }, "bot polling failed");
   db.close();
   process.exit(1);
 }

@@ -1,3 +1,5 @@
+import type { Action, MessageInput } from "../types.js";
+
 // Regex збережені 1-в-1 з оригінального бота.
 // TODO: `.com` без escape означає що `instagrammcom` теж зматчиться.
 // Це не критично і поза рамками FC/IS-рефакторингу. Виправимо окремо.
@@ -14,4 +16,14 @@ export function rewriteXUrl(text: string): string | null {
   const m = X_RE.exec(text);
   if (!m?.[3]) return null;
   return `https://fxtwitter.com/${m[3]}`;
+}
+
+export function matchUrlRewrites(input: MessageInput): Action[] | null {
+  const ig = rewriteInstagramUrl(input.text);
+  if (ig) return [{ kind: "reply_text", text: ig, replyTo: input.messageId }];
+
+  const x = rewriteXUrl(input.text);
+  if (x) return [{ kind: "reply_text", text: x, replyTo: input.messageId }];
+
+  return null;
 }
