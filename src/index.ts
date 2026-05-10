@@ -6,11 +6,13 @@ import { loadInsults } from "./shell/insults.js";
 import { makeLlmClient } from "./shell/llm/anthropic.js";
 import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
 import { PERSONA_PROMPT } from "./shell/llm/persona.js";
+import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
 import { openDb } from "./shell/storage/db.js";
 import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
 import { makeMessageAppender } from "./shell/storage/messages.js";
 import { makeOptOutsStore } from "./shell/storage/opt-outs.js";
+import { makePhotoCacheStore } from "./shell/storage/photo-cache.js";
 import { makeRegularsStore } from "./shell/storage/regulars.js";
 import { makeDynamicRuleStore } from "./shell/storage/rules.js";
 import { executeActions, toMessageInput } from "./shell/telegram.js";
@@ -33,8 +35,16 @@ log.info({ count: insults.length }, "insults loaded");
 
 const dynamicRuleStore = makeDynamicRuleStore(db, log);
 const appendMessage = makeMessageAppender(db);
+const photoCacheStore = makePhotoCacheStore(db);
 
 const llmClient = makeLlmClient(config.ANTHROPIC_API_KEY);
+
+const bot = new Bot(config.BOT_TOKEN);
+const photoFetcher = makePhotoFetcher({
+  api: bot.api,
+  botToken: config.BOT_TOKEN,
+  cache: photoCacheStore,
+});
 
 const invokeLlmDeps: InvokeLlmDeps = {
   llmClient,
@@ -49,11 +59,15 @@ const invokeLlmDeps: InvokeLlmDeps = {
   regularsStore,
   rng: Math.random,
   log,
+  visionEnabled: config.KYTSUNIA_VISION_ENABLED,
+  photoFetcher,
+  maxPhotosTotal: config.KYTSUNIA_MAX_PHOTOS_TOTAL,
+  maxPhotosPerAlbum: config.KYTSUNIA_MAX_PHOTOS_PER_ALBUM,
+  albumDebounceMs: config.KYTSUNIA_VISION_ALBUM_DEBOUNCE_MS,
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 };
 
 log.info({ model: config.LLM_MODEL }, "llm client ready");
-
-const bot = new Bot(config.BOT_TOKEN);
 
 try {
   await bot.init();

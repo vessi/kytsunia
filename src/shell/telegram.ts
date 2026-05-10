@@ -26,6 +26,11 @@ export function toMessageInput(ctx: Context): MessageInput | null {
   const senderName = m.from?.first_name ?? "";
   const kind = detectKind(m);
 
+  // Telegram віддає фото в кількох розмірах; беремо найбільший — для зору модель
+  // отримає максимум деталей, ціна токенів та сама.
+  const largestPhoto = m.photo?.at(-1);
+  const replyLargestPhoto = m.reply_to_message?.photo?.at(-1);
+
   const reply = m.reply_to_message;
   const replyTo = reply
     ? {
@@ -35,6 +40,13 @@ export function toMessageInput(ctx: Context): MessageInput | null {
         ...(reply.text ? { text: reply.text } : {}),
         ...(reply.animation ? { animationFileId: reply.animation.file_id } : {}),
         ...(reply.sticker ? { stickerFileId: reply.sticker.file_id } : {}),
+        ...(replyLargestPhoto
+          ? {
+              photoFileId: replyLargestPhoto.file_id,
+              photoUniqueId: replyLargestPhoto.file_unique_id,
+            }
+          : {}),
+        ...(reply.media_group_id ? { mediaGroupId: reply.media_group_id } : {}),
       }
     : undefined;
 
@@ -53,6 +65,10 @@ export function toMessageInput(ctx: Context): MessageInput | null {
     kind,
     ...(replyTo ? { replyTo } : {}),
     ...(forwardOrigin ? { forwardOrigin } : {}),
+    ...(largestPhoto
+      ? { photoFileId: largestPhoto.file_id, photoUniqueId: largestPhoto.file_unique_id }
+      : {}),
+    ...(m.media_group_id ? { mediaGroupId: m.media_group_id } : {}),
   };
 }
 

@@ -40,7 +40,7 @@ function makeProfile(
 }
 
 function makeMessage(senderId: number, senderName: string): RecentMessageRow {
-  return { ts: 1, senderId, senderName, text: "x", kind: "text" };
+  return { ts: 1, senderId, senderName, text: "x", kind: "text", photos: [], mediaGroupId: null };
 }
 
 describe("collectProfiles", () => {

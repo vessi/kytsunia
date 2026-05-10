@@ -16,6 +16,21 @@ const envSchema = z.object({
   DEFAULT_DAILY_LLM_LIMIT: envValue(z.coerce.number().int().positive().default(15)),
   GLOBAL_DAILY_LLM_CAP: envValue(z.coerce.number().int().positive().default(150)),
   LLM_MODEL: envValue(z.string().default("claude-haiku-4-5-20251001")),
+  // Vision (фото у відповідях). Фіче-флаг — щоб можна було вимкнути без релізу.
+  KYTSUNIA_VISION_ENABLED: envValue(
+    z
+      .string()
+      .default("true")
+      .transform((v) => v === "true" || v === "1"),
+  ),
+  // Жорсткий cap на кількість фото в одному запиті до моделі.
+  // ~1.5k токенів на фото; 8 фото ≈ +12k input tokens на reply.
+  KYTSUNIA_MAX_PHOTOS_TOTAL: envValue(z.coerce.number().int().positive().default(8)),
+  // Cap на один альбом у контексті — щоб великий альбом не зʼїв весь бюджет.
+  KYTSUNIA_MAX_PHOTOS_PER_ALBUM: envValue(z.coerce.number().int().positive().default(5)),
+  // Затримка перед збором сіблінгів альбому. Telegram шле фото окремими update-ами,
+  // потрібен час, щоб всі дійшли в DB.
+  KYTSUNIA_VISION_ALBUM_DEBOUNCE_MS: envValue(z.coerce.number().int().nonnegative().default(1500)),
 });
 
 export type Config = z.infer<typeof envSchema>;

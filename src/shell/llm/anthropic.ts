@@ -8,10 +8,26 @@ export type LlmReply = {
   cacheWriteTokens: number;
 };
 
+export type ImageContent = {
+  type: "image";
+  source: {
+    type: "base64";
+    media_type: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+    data: string;
+  };
+};
+
+export type TextContent = {
+  type: "text";
+  text: string;
+};
+
+export type UserContent = string | Array<TextContent | ImageContent>;
+
 export type LlmClient = {
   reply: (
     system: string,
-    userMessage: string,
+    userMessage: UserContent,
     model: string,
     maxTokens?: number,
   ) => Promise<LlmReply>;

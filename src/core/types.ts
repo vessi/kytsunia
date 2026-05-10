@@ -8,6 +8,11 @@ export type MessageInput = {
   replyTo?: ReplyContext;
   forwardOrigin?: ForwardOrigin;
   kind: MessageKind;
+  // Найбільший розмір з m.photo. Caption йде в text вище.
+  photoFileId?: string;
+  photoUniqueId?: string;
+  // Альбом: всі фото-update-и з одним media_group_id належать одному повідомленню юзера.
+  mediaGroupId?: string;
 };
 
 export type ReplyContext = {
@@ -17,6 +22,9 @@ export type ReplyContext = {
   text?: string;
   animationFileId?: string;
   stickerFileId?: string;
+  photoFileId?: string;
+  photoUniqueId?: string;
+  mediaGroupId?: string;
 };
 
 export type ForwardOrigin = {
