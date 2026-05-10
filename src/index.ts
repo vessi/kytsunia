@@ -46,6 +46,24 @@ const photoFetcher = makePhotoFetcher({
   cache: photoCacheStore,
 });
 
+log.info({ model: config.LLM_MODEL }, "llm client ready");
+
+try {
+  await bot.init();
+} catch (err) {
+  if (err instanceof Error && err.message.includes("getMe")) {
+    log.error({ msg: err.message }, "bot failed to authenticate, check BOT_TOKEN");
+  } else {
+    log.error({ err }, "bot init failed");
+  }
+  db.close();
+  process.exit(1);
+}
+
+const botUserId = bot.botInfo.id;
+const botName = bot.botInfo.first_name ?? "Кицюня";
+log.info({ username: bot.botInfo.username, id: botUserId }, "bot info loaded");
+
 const invokeLlmDeps: InvokeLlmDeps = {
   llmClient,
   llmCallStore,
@@ -64,25 +82,14 @@ const invokeLlmDeps: InvokeLlmDeps = {
   maxPhotosTotal: config.KYTSUNIA_MAX_PHOTOS_TOTAL,
   maxPhotosPerAlbum: config.KYTSUNIA_MAX_PHOTOS_PER_ALBUM,
   albumDebounceMs: config.KYTSUNIA_VISION_ALBUM_DEBOUNCE_MS,
+  threadDepth: config.KYTSUNIA_VISION_THREAD_DEPTH,
+  ttlMs: config.KYTSUNIA_VISION_TTL_MS,
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  now: () => Date.now(),
+  appendMessage,
+  botUserId,
+  botName,
 };
-
-log.info({ model: config.LLM_MODEL }, "llm client ready");
-
-try {
-  await bot.init();
-} catch (err) {
-  if (err instanceof Error && err.message.includes("getMe")) {
-    log.error({ msg: err.message }, "bot failed to authenticate, check BOT_TOKEN");
-  } else {
-    log.error({ err }, "bot init failed");
-  }
-  db.close();
-  process.exit(1);
-}
-
-const botUserId = bot.botInfo.id;
-log.info({ username: bot.botInfo.username, id: botUserId }, "bot info loaded");
 
 bot.on("message", async (ctx) => {
   const input = toMessageInput(ctx);

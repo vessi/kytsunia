@@ -31,6 +31,15 @@ const envSchema = z.object({
   // Затримка перед збором сіблінгів альбому. Telegram шле фото окремими update-ами,
   // потрібен час, щоб всі дійшли в DB.
   KYTSUNIA_VISION_ALBUM_DEBOUNCE_MS: envValue(z.coerce.number().int().nonnegative().default(1500)),
+  // Глибина traversal по reply-ланцюгу для пошуку фото в треді.
+  // Кицюня зберігає свої відповіді — тож chain типу
+  //   user(текст) → bot → user(текст) → bot → user(фото)
+  // має знайти фото за 4 кроки.
+  KYTSUNIA_VISION_THREAD_DEPTH: envValue(z.coerce.number().int().nonnegative().default(5)),
+  // Fallback: якщо ні trigger, ні chain не дали фото — беремо останнє фото в чаті
+  // за останні N мс. Покриває «постив фото, тегаю Кицюню без reply».
+  // Короткий TTL щоб не повертатись до recency-bias.
+  KYTSUNIA_VISION_TTL_MS: envValue(z.coerce.number().int().nonnegative().default(120_000)),
 });
 
 export type Config = z.infer<typeof envSchema>;

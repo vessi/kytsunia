@@ -2,7 +2,11 @@ import type { Context } from "grammy";
 import type { Logger } from "../logger.js";
 import type { Db } from "../storage/db.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
-import { getRecentMessages, type RecentMessageRow } from "../storage/messages.js";
+import {
+  getRecentMessages,
+  type MessageAppender,
+  type RecentMessageRow,
+} from "../storage/messages.js";
 import type { RegularsStore } from "../storage/regulars.js";
 import type { LlmClient } from "./anthropic.js";
 import { buildLlmRequest, type RecentMessage } from "./context.js";
@@ -29,7 +33,15 @@ export type InvokeLlmDeps = {
   maxPhotosTotal: number;
   maxPhotosPerAlbum: number;
   albumDebounceMs: number;
+  threadDepth: number;
+  ttlMs: number;
   sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  // Persistence: зберігаємо власні відповіді Кицюні в DB, щоб reply-chain
+  // міг по них пройтися — інакше «user → bot → user» розриває chain.
+  appendMessage: MessageAppender;
+  botUserId: number;
+  botName: string;
 };
 
 const RATE_LIMIT_REPLIES = [
@@ -90,28 +102,94 @@ function collectTriggerPhotos(ctx: Context, db: Db): PhotoRef[] {
   return [];
 }
 
+interface ChainRow {
+  reply_to_id: number | null;
+  photo_file_id: string | null;
+  photo_unique_id: string | null;
+  media_group_id: string | null;
+}
+
 /**
- * Фото, на які поточне повідомлення посилається через reply_to.
- *  - Альбом → всі сіблінги з DB.
- *  - Одне фото → беремо file_id прямо з ctx.reply_to_message.
- *  - Reply без фото → порожній масив.
+ * Шукає фото в reply-chain починаючи з повідомлення, на яке тегнули. Якщо в
+ * самому reply-таргеті фото немає — йдемо за його reply_to_id, і так далі до
+ * maxDepth. Кожне повідомлення Кицюні теж зберігається в DB з reply_to_id, тож
+ * chain типу «user(текст) → bot → user(текст) → bot → user(фото)» розплутається.
  *
- * НАВМИСНО НЕ підтягуємо «просто з історії»: інакше моделі бачать фото на
- * кожному текстовому реплаї і фіксуються на них (recency-photo-bias).
+ * Це і є «памʼять про картинку в треді».
  */
-function collectReplyTargetPhotos(ctx: Context, db: Db): PhotoRef[] {
+function collectReplyTargetPhotos(ctx: Context, db: Db, maxDepth: number): PhotoRef[] {
   const reply = ctx.message?.reply_to_message;
   if (!reply) return [];
   const chatId = ctx.message?.chat.id ?? 0;
 
+  // Direct check на reply-таргет: фото там може бути в ctx прямо.
   if (reply.media_group_id) {
-    return getAlbumPhotoRefs(db, chatId, reply.media_group_id);
+    const refs = getAlbumPhotoRefs(db, chatId, reply.media_group_id);
+    if (refs.length > 0) return refs;
   }
-  const largest = reply.photo?.at(-1);
-  if (largest) {
-    return [{ fileId: largest.file_id, uniqueId: largest.file_unique_id }];
+  const direct = reply.photo?.at(-1);
+  if (direct) {
+    return [{ fileId: direct.file_id, uniqueId: direct.file_unique_id }];
+  }
+
+  // Walk: починаємо з reply-таргета в DB, йдемо за reply_to_id поки не знайдемо
+  // фото чи не вичерпаємо депт.
+  const stmt = db.prepare(`
+    SELECT reply_to_id, photo_file_id, photo_unique_id, media_group_id
+    FROM messages
+    WHERE chat_id = ? AND msg_id = ?
+  `);
+
+  let currentMsgId: number | null = reply.message_id;
+  for (let depth = 0; depth < maxDepth && currentMsgId !== null; depth++) {
+    const row = stmt.get(chatId, currentMsgId) as ChainRow | undefined;
+    if (!row) return [];
+
+    if (row.media_group_id) {
+      const refs = getAlbumPhotoRefs(db, chatId, row.media_group_id);
+      if (refs.length > 0) return refs;
+    }
+    if (row.photo_file_id && row.photo_unique_id) {
+      return [{ fileId: row.photo_file_id, uniqueId: row.photo_unique_id }];
+    }
+    currentMsgId = row.reply_to_id;
   }
   return [];
+}
+
+/**
+ * Останнє фото в чаті за останні ttlMs мілісекунд. Запасний канал, коли тригер
+ * без фото, без reply, але хтось щойно постив фото і користувач явно говорить
+ * саме про нього («@kytsynia що це?»). Короткий TTL — захист від recency-bias.
+ */
+function collectRecentPhotoFallback(
+  db: Db,
+  chatId: number,
+  ttlMs: number,
+  now: number,
+): PhotoRef[] {
+  if (ttlMs <= 0) return [];
+  const since = now - ttlMs;
+  const stmt = db.prepare(`
+    SELECT msg_id, photo_file_id, photo_unique_id, media_group_id
+    FROM messages
+    WHERE chat_id = ? AND ts >= ? AND photo_file_id IS NOT NULL
+    ORDER BY ts DESC
+    LIMIT 1
+  `);
+  const row = stmt.get(chatId, since) as
+    | {
+        msg_id: number;
+        photo_file_id: string;
+        photo_unique_id: string;
+        media_group_id: string | null;
+      }
+    | undefined;
+  if (!row) return [];
+  if (row.media_group_id) {
+    return getAlbumPhotoRefs(db, chatId, row.media_group_id);
+  }
+  return [{ fileId: row.photo_file_id, uniqueId: row.photo_unique_id }];
 }
 
 /**
@@ -200,11 +278,13 @@ export async function invokeLlmReply(
 
   // 5. Зібрати фото — ТІЛЬКИ ті, на які явно посилаємось:
   //    - trigger (поточне фото або альбом)
-  //    - reply target (фото в reply_to_message + сіблінги альбому)
-  //    Історичні фото свідомо не підтягуємо — інакше модель фіксується на них
-  //    при кожному наступному текстовому реплаї (recency-photo-bias).
+  //    - reply chain (reply_to_message → ... → знайдене фото)
+  //    - TTL fallback: останнє фото в чаті за N секунд, якщо нічого вище не знайшли
+  //    Історичні фото поза цими каналами НЕ підтягуються (recency-photo-bias).
   const triggerRaw = deps.visionEnabled ? collectTriggerPhotos(ctx, deps.db) : [];
-  const replyRaw = deps.visionEnabled ? collectReplyTargetPhotos(ctx, deps.db) : [];
+  const replyRaw = deps.visionEnabled
+    ? collectReplyTargetPhotos(ctx, deps.db, deps.threadDepth)
+    : [];
 
   // Per-album cap до кожного джерела окремо.
   const triggerPhotoRefs = triggerRaw.slice(0, deps.maxPhotosPerAlbum);
@@ -218,8 +298,21 @@ export async function invokeLlmReply(
   const replyDeduped = replyRaw.filter((p) => !triggerUniqueIds.has(p.uniqueId));
   const replyPhotoRefs = replyDeduped.slice(0, deps.maxPhotosPerAlbum);
 
-  // Total cap: trigger має пріоритет.
-  const allRefs = [...triggerPhotoRefs, ...replyPhotoRefs].slice(0, deps.maxPhotosTotal);
+  // TTL fallback тільки коли нічого не знайдено в попередніх каналах.
+  let fallbackRefs: PhotoRef[] = [];
+  if (deps.visionEnabled && triggerPhotoRefs.length === 0 && replyPhotoRefs.length === 0) {
+    const raw = collectRecentPhotoFallback(deps.db, chatId, deps.ttlMs, deps.now());
+    fallbackRefs = raw.slice(0, deps.maxPhotosPerAlbum);
+    if (fallbackRefs.length > 0) {
+      deps.log.debug({ count: fallbackRefs.length, ttlMs: deps.ttlMs }, "vision: TTL fallback hit");
+    }
+  }
+
+  // Total cap: trigger > reply chain > TTL fallback.
+  const allRefs = [...triggerPhotoRefs, ...replyPhotoRefs, ...fallbackRefs].slice(
+    0,
+    deps.maxPhotosTotal,
+  );
 
   // 6. Завантаження байтів (паралельно, толерантно).
   const fetched = await fetchPhotosTolerant(allRefs, deps.photoFetcher, deps.log);
@@ -276,7 +369,27 @@ export async function invokeLlmReply(
       "llm reply ok",
     );
 
-    await ctx.reply(reply.text, { reply_to_message_id: replyTo });
+    const sent = await ctx.reply(reply.text, { reply_to_message_id: replyTo });
+    // Зберігаємо власну відповідь — без цього reply-chain «user → bot → user»
+    // не зможе пройтися назад до фото.
+    try {
+      deps.appendMessage({
+        chatId,
+        messageId: sent.message_id,
+        ts: sent.date * 1000,
+        senderId: deps.botUserId,
+        senderName: deps.botName,
+        text: reply.text,
+        kind: "text",
+        replyTo: { messageId: replyTo, authorId: userId, authorName: userName },
+      });
+    } catch (persistErr) {
+      // Не валимо UX через помилку запису — просто логуємо.
+      deps.log.warn(
+        { err: persistErr instanceof Error ? persistErr.message : persistErr },
+        "failed to persist bot reply",
+      );
+    }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     deps.llmCallStore.record({ ...baseRecord, status: "error", errorMessage });

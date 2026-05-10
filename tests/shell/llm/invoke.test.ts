@@ -38,7 +38,9 @@ function makeCtx(overrides: {
   mediaGroupId?: string;
   replyToMediaGroupId?: string;
 }): { ctx: Context; reply: ReturnType<typeof vi.fn> } {
-  const reply = vi.fn().mockResolvedValue({});
+  // ctx.reply повертає Message-подібний обʼєкт з msg_id і date — в проді ми
+  // використовуємо це для appendMessage(bot reply).
+  const reply = vi.fn().mockResolvedValue({ message_id: 12345, date: 0 });
   const message: Record<string, unknown> = {
     message_id: 999,
     chat: { id: overrides.chatId ?? 1 },
@@ -96,7 +98,13 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     maxPhotosTotal: 8,
     maxPhotosPerAlbum: 5,
     albumDebounceMs: 1500,
+    threadDepth: 5,
+    ttlMs: 0, // тести явно вмикають TTL коли треба
     sleep: vi.fn().mockResolvedValue(undefined),
+    now: () => 1_000_000,
+    appendMessage: vi.fn(),
+    botUserId: 9999,
+    botName: "Кицюня",
     ...overrides,
   };
 }
@@ -293,7 +301,7 @@ describe("invokeLlmReply: vision", () => {
     dbsToClose.push(deps.db);
 
     // reply_to_message з фото — конструюємо ctx вручну
-    const reply = vi.fn().mockResolvedValue({});
+    const reply = vi.fn().mockResolvedValue({ message_id: 12345, date: 0 });
     const ctx = {
       message: {
         message_id: 999,
@@ -346,7 +354,7 @@ describe("invokeLlmReply: vision", () => {
       });
     }
 
-    const reply = vi.fn().mockResolvedValue({});
+    const reply = vi.fn().mockResolvedValue({ message_id: 12345, date: 0 });
     const ctx = {
       message: {
         message_id: 999,
@@ -376,7 +384,7 @@ describe("invokeLlmReply: vision", () => {
     const deps = makeBaseDeps({ photoFetcher: fetcher });
     dbsToClose.push(deps.db);
 
-    const reply = vi.fn().mockResolvedValue({});
+    const reply = vi.fn().mockResolvedValue({ message_id: 12345, date: 0 });
     const ctx = {
       message: {
         message_id: 999,
@@ -482,5 +490,291 @@ describe("invokeLlmReply: vision", () => {
     });
     await invokeLlmReply(ctx, 999, deps);
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  // ─── Reply-chain traversal & TTL fallback ─────────────────────────────
+
+  it("persists bot reply to DB after sending", async () => {
+    const appendMock = vi.fn();
+    const deps = makeBaseDeps({ appendMessage: appendMock, botUserId: 9999, botName: "Кицюня" });
+    dbsToClose.push(deps.db);
+
+    const { ctx } = makeCtx({ text: "привіт" });
+    await invokeLlmReply(ctx, 999, deps);
+
+    expect(appendMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: 12345,
+        senderId: 9999,
+        senderName: "Кицюня",
+        text: "ok",
+        kind: "text",
+        replyTo: expect.objectContaining({ messageId: 999, authorId: 7 }),
+      }),
+    );
+  });
+
+  it("traverses reply chain to find photo (user → bot → user-with-photo)", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
+    const deps = makeBaseDeps({ photoFetcher: fetcher });
+    dbsToClose.push(deps.db);
+
+    const append = makeMessageAppender(deps.db);
+    // 1. Користувач закинув фото з caption
+    append({
+      chatId: 1,
+      messageId: 100,
+      ts: 100,
+      senderId: 7,
+      senderName: "Andriy",
+      text: "що це?",
+      kind: "photo",
+      photoFileId: "fp",
+      photoUniqueId: "up",
+    });
+    // 2. Кицюня відповіла (її repl на 100)
+    append({
+      chatId: 1,
+      messageId: 101,
+      ts: 101,
+      senderId: 9999,
+      senderName: "Кицюня",
+      text: "це Зеленський",
+      kind: "text",
+      replyTo: { messageId: 100, authorId: 7, authorName: "Andriy" },
+    });
+    // 3. Користувач питає далі (на Кицюнин 101) — наш trigger
+    const reply = vi.fn().mockResolvedValue({ message_id: 12345, date: 0 });
+    const ctx = {
+      message: {
+        message_id: 102,
+        chat: { id: 1 },
+        from: { id: 7, first_name: "Andriy" },
+        date: 0,
+        text: "а що ще там видно?",
+        reply_to_message: { message_id: 101 }, // reply на Кицюню (текст, без фото)
+      },
+      chat: { id: 1 },
+      from: { id: 7 },
+      reply,
+    } as unknown as Context;
+
+    await invokeLlmReply(ctx, 102, deps);
+
+    // Chain має знайти фото з msg 100
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith("fp", "up");
+  });
+
+  it("traverses chain across multiple bot/user hops", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
+    const deps = makeBaseDeps({ photoFetcher: fetcher });
+    dbsToClose.push(deps.db);
+
+    const append = makeMessageAppender(deps.db);
+    // фото
+    append({
+      chatId: 1,
+      messageId: 100,
+      ts: 100,
+      senderId: 7,
+      senderName: "A",
+      text: "",
+      kind: "photo",
+      photoFileId: "fp",
+      photoUniqueId: "up",
+    });
+    // 4 ітерації бот ↔ юзер без фото
+    for (let i = 0; i < 4; i++) {
+      const id = 101 + i;
+      const replyToId = 100 + i;
+      append({
+        chatId: 1,
+        messageId: id,
+        ts: 100 + i + 1,
+        senderId: i % 2 === 0 ? 9999 : 7,
+        senderName: i % 2 === 0 ? "Кицюня" : "A",
+        text: `t${i}`,
+        kind: "text",
+        replyTo: {
+          messageId: replyToId,
+          authorId: i % 2 === 0 ? 7 : 9999,
+          authorName: "x",
+        },
+      });
+    }
+
+    const reply = vi.fn().mockResolvedValue({ message_id: 12345, date: 0 });
+    const ctx = {
+      message: {
+        message_id: 200,
+        chat: { id: 1 },
+        from: { id: 7, first_name: "A" },
+        date: 0,
+        text: "?",
+        reply_to_message: { message_id: 104 }, // 4 hops from photo (104→103→102→101→100)
+      },
+      chat: { id: 1 },
+      from: { id: 7 },
+      reply,
+    } as unknown as Context;
+
+    await invokeLlmReply(ctx, 200, deps);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith("fp", "up");
+  });
+
+  it("respects threadDepth limit (does not find photo too deep)", async () => {
+    const fetcher = vi.fn() as unknown as PhotoFetcher;
+    const deps = makeBaseDeps({ photoFetcher: fetcher, threadDepth: 2 });
+    dbsToClose.push(deps.db);
+
+    const append = makeMessageAppender(deps.db);
+    // фото в самому корені
+    append({
+      chatId: 1,
+      messageId: 100,
+      ts: 100,
+      senderId: 7,
+      senderName: "A",
+      text: "",
+      kind: "photo",
+      photoFileId: "fp",
+      photoUniqueId: "up",
+    });
+    // 5 текстових повідомлень в chain
+    for (let i = 0; i < 5; i++) {
+      append({
+        chatId: 1,
+        messageId: 101 + i,
+        ts: 100 + i + 1,
+        senderId: 7,
+        senderName: "A",
+        text: "x",
+        kind: "text",
+        replyTo: { messageId: 100 + i, authorId: 7, authorName: "A" },
+      });
+    }
+
+    const reply = vi.fn().mockResolvedValue({ message_id: 12345, date: 0 });
+    const ctx = {
+      message: {
+        message_id: 200,
+        chat: { id: 1 },
+        from: { id: 7, first_name: "A" },
+        date: 0,
+        text: "?",
+        reply_to_message: { message_id: 105 }, // фото на 5 hops, depth=2
+      },
+      chat: { id: 1 },
+      from: { id: 7 },
+      reply,
+    } as unknown as Context;
+
+    await invokeLlmReply(ctx, 200, deps);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("TTL fallback finds recent photo when no trigger or chain", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
+    const NOW = 1_000_000;
+    const deps = makeBaseDeps({
+      photoFetcher: fetcher,
+      ttlMs: 60_000,
+      now: () => NOW,
+    });
+    dbsToClose.push(deps.db);
+
+    const append = makeMessageAppender(deps.db);
+    // Фото 30 сек тому — в межах TTL
+    append({
+      chatId: 1,
+      messageId: 100,
+      ts: NOW - 30_000,
+      senderId: 7,
+      senderName: "A",
+      text: "",
+      kind: "photo",
+      photoFileId: "recent",
+      photoUniqueId: "recent_u",
+    });
+
+    const { ctx } = makeCtx({ text: "що це?" });
+    await invokeLlmReply(ctx, 999, deps);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith("recent", "recent_u");
+  });
+
+  it("TTL fallback ignores photos outside the window", async () => {
+    const fetcher = vi.fn() as unknown as PhotoFetcher;
+    const NOW = 1_000_000;
+    const deps = makeBaseDeps({
+      photoFetcher: fetcher,
+      ttlMs: 60_000,
+      now: () => NOW,
+    });
+    dbsToClose.push(deps.db);
+
+    const append = makeMessageAppender(deps.db);
+    // Фото 5 хв тому — поза TTL
+    append({
+      chatId: 1,
+      messageId: 100,
+      ts: NOW - 5 * 60_000,
+      senderId: 7,
+      senderName: "A",
+      text: "",
+      kind: "photo",
+      photoFileId: "old",
+      photoUniqueId: "old_u",
+    });
+
+    const { ctx } = makeCtx({ text: "що це?" });
+    await invokeLlmReply(ctx, 999, deps);
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("TTL fallback skipped when trigger has photo", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
+    const NOW = 1_000_000;
+    const deps = makeBaseDeps({
+      photoFetcher: fetcher,
+      ttlMs: 60_000,
+      now: () => NOW,
+    });
+    dbsToClose.push(deps.db);
+
+    // Recent photo в TTL — не повинно мікшуватись з trigger.
+    const append = makeMessageAppender(deps.db);
+    append({
+      chatId: 1,
+      messageId: 100,
+      ts: NOW - 10_000,
+      senderId: 7,
+      senderName: "A",
+      text: "",
+      kind: "photo",
+      photoFileId: "recent",
+      photoUniqueId: "recent_u",
+    });
+
+    const { ctx } = makeCtx({
+      caption: "ось нове",
+      photo: [{ file_id: "newone", file_unique_id: "newone_u" }],
+    });
+    await invokeLlmReply(ctx, 999, deps);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith("newone", "newone_u");
   });
 });
