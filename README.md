@@ -6,9 +6,9 @@ Telegram бот з характером для приватних чатів.
 
 Потрібен Node 22+ і pnpm.
 
-\`\`\`bash
+```bash
 pnpm install
 cp .env.example .env
 # заповни .env
 pnpm dev
-\`\`\`
+```
