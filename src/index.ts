@@ -1,185 +1,137 @@
-import { Bot, InputFile } from "grammy";
-import { readFileSync, writeFileSync } from "fs";
-import { debounce } from "ts-debounce";
-import { Rule } from "./rule";
+import { Bot } from "grammy";
+import { loadConfig } from "./config.js";
+import { match } from "./core/matcher.js";
+import type { State } from "./core/types.js";
+import { loadInsults } from "./shell/insults.js";
+import { makeLlmClient } from "./shell/llm/anthropic.js";
+import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
+import { PERSONA_PROMPT } from "./shell/llm/persona.js";
+import { createLogger } from "./shell/logger.js";
+import { openDb } from "./shell/storage/db.js";
+import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
+import { makeMessageAppender } from "./shell/storage/messages.js";
+import { makeOptOutsStore } from "./shell/storage/opt-outs.js";
+import { makeRegularsStore } from "./shell/storage/regulars.js";
+import { makeDynamicRuleStore } from "./shell/storage/rules.js";
+import { executeActions, toMessageInput } from "./shell/telegram.js";
 
-const bot = new Bot(process.env.BOT_TOKEN ?? "")
+const config = loadConfig();
+const log = createLogger(config);
 
-const dynamicRules : Rule[] = []
+log.info({ env: config.NODE_ENV }, "kytsunia starting");
 
-const insults = JSON.parse(readFileSync("insults.json", "utf-8"));
-const rulesText = readFileSync("rules.json", "utf-8");
+const db = openDb(config.DB_PATH, log);
+const llmCallStore = makeLlmCallStore(db);
+const regularsStore = makeRegularsStore(db);
+const optOutsStore = makeOptOutsStore(db);
+log.info({ dbPath: config.DB_PATH }, "database opened");
+log.info({ count: regularsStore.list().length }, "regulars loaded");
+log.info({ count: optOutsStore.list().length }, "profile opt-outs loaded");
 
-JSON.parse(rulesText).forEach((rule: { regex: string, type: string, fileId: string }) => {
-  switch (rule.type) {
-    case "gif":
-      dynamicRules.push(new Rule(new RegExp(rule.regex), (ctx) => { ctx.api.sendAnimation(ctx.chat?.id ?? 0, rule.fileId) }, { type: "gif", fileId: rule.fileId }));
-      break;
-    case "sticker":
-      dynamicRules.push(new Rule(new RegExp(rule.regex), (ctx) => { ctx.api.sendSticker(ctx.chat?.id ?? 0, rule.fileId) }, { type: "sticker", fileId: rule.fileId }));
+const insults = loadInsults("./data/insults.json", log);
+log.info({ count: insults.length }, "insults loaded");
+
+const dynamicRuleStore = makeDynamicRuleStore(db, log);
+const appendMessage = makeMessageAppender(db);
+
+const llmClient = makeLlmClient(config.ANTHROPIC_API_KEY);
+
+const invokeLlmDeps: InvokeLlmDeps = {
+  llmClient,
+  llmCallStore,
+  db,
+  model: config.LLM_MODEL,
+  persona: PERSONA_PROMPT,
+  defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
+  globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
+  recentContextSize: 10,
+  profilesLimit: 5,
+  regularsStore,
+  rng: Math.random,
+  log,
+};
+
+log.info({ model: config.LLM_MODEL }, "llm client ready");
+
+const bot = new Bot(config.BOT_TOKEN);
+
+try {
+  await bot.init();
+} catch (err) {
+  if (err instanceof Error && err.message.includes("getMe")) {
+    log.error({ msg: err.message }, "bot failed to authenticate, check BOT_TOKEN");
+  } else {
+    log.error({ err }, "bot init failed");
   }
-})
+  db.close();
+  process.exit(1);
+}
 
-const debouncedReply = debounce((ctx, mode, id) => {
-  switch (mode) {
-    case "gif":
-      ctx.replyWithAnimation(id, {
-        reply_to_message_id: ctx.message?.message_id
-      });
-      break;
-    case "sticker":
-      ctx.replyWithSticker(id, {
-        reply_to_message_id: ctx.message?.message_id
-      });
-      break;
-    default:
-      break;
-  }
-}, 1000)
-
-setInterval(() => {
-  const ruleSet : { regex: string; type: string; fileId: string; }[] = [];
-  dynamicRules.forEach((rule) => {
-    ruleSet.push({ regex: rule.regex.source, type: rule.meta.type, fileId: rule.meta.fileId });
-  })
-  const ruleSetString = JSON.stringify(ruleSet);
-  writeFileSync("rules.json", ruleSetString);
-}, 5000);
-
-const fixedRules = [
-  (new Rule(/(К|к)ицюн(я|ю)!/, (ctx) => { ctx.react("🤔") })),
-  (new Rule(/(К|к)ицюн(я|ю), ти людина чи компʼютер\?/, (ctx) => {
-    const message_id = ctx.message?.message_id;
-    ctx.reply("Я компʼютер!", { reply_to_message_id: message_id })
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), де тривога?/, (ctx) => {
-    const alerts = new URL("https://alerts.com.ua/map.png");
-    const alertsFile = new InputFile(alerts, "alerts.png");
-    if (ctx.chat) {
-      ctx.api.sendPhoto(ctx.chat.id, alertsFile);
-    }
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), виховуй/, (ctx) => {
-    const reply_id = ctx.message?.reply_to_message?.message_id ?? ctx.message?.message_id
-    // Select random insult from insults array and reply to the message
-    const insult = insults[Math.floor(Math.random() * insults.length)];
-    ctx.reply(insult, { reply_to_message_id: reply_id });
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), скажи в (-\d*) (.*)/, async (ctx, rule) => {
-    const message = ctx.message?.text;
-    const match = rule.regex.exec(message?? "");
-    const chat_id = match?.[3];
-    const what_to_say = match?.[4];
-    await bot.api.sendMessage(chat_id ?? 0, what_to_say ?? "");
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), запиши як (.*)\.гіф/, (ctx, rule) => {
-    const message = ctx.message?.text;
-    const match = rule.regex.exec(message ?? "");
-    const gifName = match?.[3];
-    const gif = ctx.message?.reply_to_message?.animation?.file_id;
-    if (gif && gifName) {
-      const newRule = new Rule(new RegExp(`${gifName}\.гіф`), (ctx) => { ctx.api.sendAnimation(ctx.chat?.id ?? 0, gif) }, { type: "gif", fileId: gif });
-      dynamicRules.push(newRule);
-      ctx.reply(`Записала як ${gifName}`, { reply_to_message_id: ctx.message?.message_id });
-    }
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), запиши як (.*)\.стікер/, (ctx, rule) => {
-    const message = ctx.message?.text;
-    const match = rule.regex.exec(message ?? "");
-    const gifName = match?.[3];
-    const gif = ctx.message?.reply_to_message?.sticker?.file_id;
-    if (gif && gifName) {
-      const newRule = new Rule(new RegExp(`${gifName}\.стікер`), (ctx) => { ctx.api.sendSticker(ctx.chat?.id ?? 0, gif) }, { type: "sticker", fileId: gif });
-      dynamicRules.push(newRule);
-      ctx.reply(`Записала як ${gifName}`, { reply_to_message_id: ctx.message?.message_id });
-    }
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), забудь (.*)\.гіф/, (ctx, rule) => {
-    const message = ctx.message?.text;
-    const match = rule.regex.exec(message ?? "");
-    const oldRule = dynamicRules.find((rule) => rule.regex.source === `${match?.[3]}.гіф`);
-    if (!oldRule) {
-      ctx.reply("Такого правила немає", { reply_to_message_id: ctx.message?.message_id })
-    } else {
-      dynamicRules.splice(dynamicRules.indexOf(oldRule), 1);
-      ctx.reply("Забула", { reply_to_message_id: ctx.message?.message_id })
-    }
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), забудь (.*)\.стікер/, (ctx, rule) => {
-    const message = ctx.message?.text;
-    const match = rule.regex.exec(message ?? "");
-    const oldRule = dynamicRules.find((rule) => rule.regex.source === `${match?.[3]}.стікер`);
-    if (!oldRule) {
-      ctx.reply("Такого правила немає", { reply_to_message_id: ctx.message?.message_id })
-    } else {
-      dynamicRules.splice(dynamicRules.indexOf(oldRule), 1);
-      ctx.reply("Забула", { reply_to_message_id: ctx.message?.message_id })
-    }
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), які знаєш гіфки\?/, (ctx) => {
-    const gifs = dynamicRules.filter((rule) => rule.meta.type === "gif").map((rule) => rule.regex.source.replace(".гіф", ""));
-    const gifsList = gifs.join("\n");
-    if (gifsList === "") {
-      ctx.reply("Список порожній", { reply_to_message_id: ctx.message?.message_id });
-      return;
-    }
-    ctx.reply(gifsList, { reply_to_message_id: ctx.message?.message_id });
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), які знаєш стікери\?/, (ctx) => {
-    const stickers = dynamicRules.filter((rule) => rule.meta.type === "sticker").map((rule) => rule.regex.source.replace(".стікер", ""));
-    const stickersList = stickers.join("\n");
-    if (stickersList === "") {
-      ctx.reply("Список порожній", { reply_to_message_id: ctx.message?.message_id });
-      return;
-    }
-    ctx.reply(stickersList, { reply_to_message_id: ctx.message?.message_id });
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), запишись!/, (ctx) => {
-    ctx.reply("Дядя, ти дурак? Автоматично зберігаюсь вже", { reply_to_message_id: ctx.message?.message_id });
-  })),
-  (new Rule(/(К|к)ицюн(я|ю), список!/, (ctx) => {
-    const list = fixedRules.concat(dynamicRules).map((rule) => rule.regex.source).join("\n");
-    ctx.reply(list, { reply_to_message_id: ctx.message?.message_id });
-  })),
-  (new Rule(/https:\/\/(www\.)?instagram.com\/(.*)\/?/, (ctx, rule) => {
-    const message = ctx.message?.text;
-    const match = rule.regex.exec(message ?? "");
-    if (match === null) {
-      return;
-    }
-    ctx.reply(`https://ddinstagram.com/${match[2]}`, { reply_to_message_id: ctx.message?.message_id });
-  })),
-  (new Rule(/https:\/\/(www\.)?(x|twitter).com\/(.*)\/?/, (ctx, rule) => {
-    const message = ctx.message?.text;
-    const match = rule.regex.exec(message ?? "");
-    if (match === null) {
-      return;
-    }
-    ctx.reply(`https://fxtwitter.com/${match[3]}`, { reply_to_message_id: ctx.message?.message_id });
-  })),
-]
+const botUserId = bot.botInfo.id;
+log.info({ username: bot.botInfo.username, id: botUserId }, "bot info loaded");
 
 bot.on("message", async (ctx) => {
-  console.log(ctx.message);
-  if (ctx.message?.forward_origin?.type === "channel") {
-    switch (ctx.message?.forward_origin?.chat.id) {
-      case -1001049320233:
-        debouncedReply(ctx, "gif", "CgACAgIAAxkBAAMyZhvcglG35KbZrvNN8k70TELlRfoAAuQtAAJQ3LlJOsR-fNtFEyU0BA");
-        break;
-      case -1001360737249:
-        debouncedReply(ctx, "sticker", "CAACAgIAAxkBAANPZhwqWMsNeI3blUQrTDxXWxGj-TEAAtVAAAJlqAhLXy-cMxg3dys0BA");
-        break;
-      case -1001536630827:
-        debouncedReply(ctx, "sticker", "CAACAgIAAxkBAANUZhwsDlXK63Vp3pbvT7PZfNh1QVIAApBGAAKP5ghI6Q_53Kwo-Ug0BA");
-        break;
-      default:
-        break;
-    }
-    return;
-  };
-  const rule = fixedRules.concat(dynamicRules).find((rule) => rule.check(ctx?.message?.text ?? ""));
-  rule?.execute(ctx);
-  return;
-})
+  const input = toMessageInput(ctx);
+  if (!input) return;
 
-bot.start();
+  appendMessage(input);
+
+  log.debug(
+    {
+      /* ... */
+    },
+    "message received",
+  );
+
+  const state: State = {
+    dynamic: dynamicRuleStore.list(),
+    policy: {
+      ...(config.ADMIN_USER_ID !== undefined ? { adminUserId: config.ADMIN_USER_ID } : {}),
+      botUserId,
+    },
+    optedOutUserIds: new Set(optOutsStore.list()),
+  };
+
+  const actions = match(input, state);
+  if (actions && actions.length > 0) {
+    log.debug({ actions: actions.map((a) => a.kind) }, "actions produced");
+    try {
+      await executeActions(actions, ctx, {
+        insults,
+        rng: Math.random,
+        dynamicRuleStore,
+        llmCallStore,
+        defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
+        invokeLlmDeps,
+        optOutsStore,
+        regularsStore,
+      });
+    } catch (err) {
+      log.error({ err: err instanceof Error ? err.message : err }, "action execution failed");
+    }
+  }
+});
+
+bot.catch((err) => {
+  log.error({ err: err.error, ctx: err.ctx?.update?.update_id }, "bot error");
+});
+
+const shutdown = (signal: string) => {
+  log.info({ signal }, "shutting down");
+  bot.stop();
+  db.close();
+  process.exit(0);
+};
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+try {
+  await bot.start({
+    onStart: (info) => log.info({ username: info.username, id: info.id }, "bot polling started"),
+  });
+} catch (err) {
+  log.error({ err }, "bot polling failed");
+  db.close();
+  process.exit(1);
+}
