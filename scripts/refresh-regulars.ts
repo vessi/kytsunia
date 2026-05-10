@@ -177,7 +177,8 @@ for (const cand of candidates) {
 ${messagesText}`;
 
   try {
-    const reply = await llmClient.reply(generatorSystem, userMessage, model);
+    // 100–250 слів українською ≈ 600–800 токенів; даємо запас, щоб не обрізало.
+    const reply = await llmClient.reply(generatorSystem, userMessage, model, 1500);
     const cost =
       calculateCost(model, {
         inputTokens: reply.inputTokens,
