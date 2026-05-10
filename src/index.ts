@@ -10,6 +10,7 @@ import { createLogger } from "./shell/logger.js";
 import { openDb } from "./shell/storage/db.js";
 import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
 import { makeMessageAppender } from "./shell/storage/messages.js";
+import { makeOptOutsStore } from "./shell/storage/opt-outs.js";
 import { makeRegularsStore } from "./shell/storage/regulars.js";
 import { makeDynamicRuleStore } from "./shell/storage/rules.js";
 import { executeActions, toMessageInput } from "./shell/telegram.js";
@@ -22,8 +23,10 @@ log.info({ env: config.NODE_ENV }, "kytsunia starting");
 const db = openDb(config.DB_PATH, log);
 const llmCallStore = makeLlmCallStore(db);
 const regularsStore = makeRegularsStore(db);
+const optOutsStore = makeOptOutsStore(db);
 log.info({ dbPath: config.DB_PATH }, "database opened");
 log.info({ count: regularsStore.list().length }, "regulars loaded");
+log.info({ count: optOutsStore.list().length }, "profile opt-outs loaded");
 
 const insults = loadInsults("./data/insults.json", log);
 log.info({ count: insults.length }, "insults loaded");
@@ -86,6 +89,7 @@ bot.on("message", async (ctx) => {
       ...(config.ADMIN_USER_ID !== undefined ? { adminUserId: config.ADMIN_USER_ID } : {}),
       botUserId,
     },
+    optedOutUserIds: new Set(optOutsStore.list()),
   };
 
   const actions = match(input, state);
@@ -99,6 +103,8 @@ bot.on("message", async (ctx) => {
         llmCallStore,
         defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
         invokeLlmDeps,
+        optOutsStore,
+        regularsStore,
       });
     } catch (err) {
       log.error({ err: err instanceof Error ? err.message : err }, "action execution failed");

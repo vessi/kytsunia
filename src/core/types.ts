@@ -37,6 +37,9 @@ export type Action =
   | { kind: "forget_dynamic_rule"; pattern: string }
   | { kind: "discipline_with_random_insult"; replyTo: number }
   | { kind: "report_user_rate_status"; userId: number; replyTo: number }
+  | { kind: "opt_out_profile"; userId: number; replyTo: number }
+  | { kind: "opt_in_profile"; userId: number; replyTo: number }
+  | { kind: "report_opt_out_status"; userId: number; replyTo: number }
   | { kind: "invoke_llm_reply"; replyTo: number };
 
 export type DynamicRuleSpec = {
@@ -53,4 +56,5 @@ export type Policy = {
 export type State = {
   dynamic: readonly DynamicRuleSpec[];
   policy: Policy;
+  optedOutUserIds: ReadonlySet<number>;
 };

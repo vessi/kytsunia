@@ -14,6 +14,7 @@ function makeMockStore(profiles: RegularProfile[]): RegularsStore {
       // noop in mock
     },
     remove: () => false,
+    removeAllForUser: () => 0,
     setManualNotes: () => {
       // noop in mock
     },

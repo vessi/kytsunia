@@ -4,6 +4,7 @@ import { makeLlmClient } from "../src/shell/llm/anthropic.js";
 import { calculateCost } from "../src/shell/llm/pricing.js";
 import { createLogger } from "../src/shell/logger.js";
 import { openDb } from "../src/shell/storage/db.js";
+import { makeOptOutsStore } from "../src/shell/storage/opt-outs.js";
 import { makeRegularsStore } from "../src/shell/storage/regulars.js";
 
 const { values } = parseArgs({
@@ -62,6 +63,11 @@ log.info(
 
 const db = openDb(config.DB_PATH, log);
 const regularsStore = makeRegularsStore(db);
+const optOutsStore = makeOptOutsStore(db);
+const optedOutSet = new Set(optOutsStore.list());
+if (optedOutSet.size > 0) {
+  log.info({ count: optedOutSet.size }, "skipping opted-out users");
+}
 const llmClient = makeLlmClient(config.ANTHROPIC_API_KEY);
 
 const cutoffTs = Date.now() - days * 24 * 3600 * 1000;
@@ -107,7 +113,15 @@ const candidatesQuery = `
   ORDER BY message_count DESC
 `;
 
-const candidates = db.prepare(candidatesQuery).all(...params) as CandidateRow[];
+const allCandidates = db.prepare(candidatesQuery).all(...params) as CandidateRow[];
+const skipped = allCandidates.filter((c) => optedOutSet.has(c.user_id));
+const candidates = allCandidates.filter((c) => !optedOutSet.has(c.user_id));
+if (skipped.length > 0) {
+  log.info(
+    { skipped: skipped.length, userIds: [...new Set(skipped.map((c) => c.user_id))] },
+    "skipped opted-out candidates",
+  );
+}
 
 if (candidates.length === 0) {
   log.warn("no candidates found");

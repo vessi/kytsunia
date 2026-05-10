@@ -16,13 +16,20 @@ function buildInput(text: string): MessageInput {
 
 describe("matchDynamic", () => {
   it("returns null on empty state", () => {
-    expect(matchDynamic(buildInput("test.гіф"), { dynamic: [], policy: {} })).toBeNull();
+    expect(
+      matchDynamic(buildInput("test.гіф"), {
+        dynamic: [],
+        policy: {},
+        optedOutUserIds: new Set(),
+      }),
+    ).toBeNull();
   });
 
   it("matches a gif rule and produces send_animation", () => {
     const state: State = {
       dynamic: [{ pattern: "test.гіф", type: "gif", fileId: "FX" }],
       policy: {},
+      optedOutUserIds: new Set(),
     };
     const result = matchDynamic(buildInput("test.гіф"), state);
     expect(result).toEqual([{ kind: "send_animation", chatId: 100, fileId: "FX" }]);
@@ -32,6 +39,7 @@ describe("matchDynamic", () => {
     const state: State = {
       dynamic: [{ pattern: "wow.стікер", type: "sticker", fileId: "SX" }],
       policy: {},
+      optedOutUserIds: new Set(),
     };
     const result = matchDynamic(buildInput("wow.стікер"), state);
     expect(result).toEqual([{ kind: "send_sticker", chatId: 100, fileId: "SX" }]);
@@ -44,6 +52,7 @@ describe("matchDynamic", () => {
         { pattern: "test.стікер", type: "sticker", fileId: "SECOND" },
       ],
       policy: {},
+      optedOutUserIds: new Set(),
     };
     const result = matchDynamic(buildInput("test.гіф"), state);
     expect(result?.[0]?.kind).toBe("send_animation");

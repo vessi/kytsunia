@@ -138,6 +138,31 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // Має йти після forget_gif / forget_sticker, щоб "забудь Х.гіф/.стікер"
+    // забирали ті правила раніше. Термінатор у класі — бо \b у JS regex
+    // ASCII-only і не спрацьовує між кириличними літерами.
+    name: "opt_out_profile",
+    pattern: /(К|к)ицюн(я|ю), забудь мене(?:[!?.\s,]|$)/,
+    produce: (input) => [
+      { kind: "opt_out_profile", userId: input.senderId, replyTo: input.messageId },
+    ],
+  },
+  {
+    // Підтримуємо обидва апострофи: ʼ (правильний) і ' (типовий ASCII).
+    name: "opt_in_profile",
+    pattern: /(К|к)ицюн(я|ю), запам(ʼ|')ятай мене(?:[!?.\s,]|$)/,
+    produce: (input) => [
+      { kind: "opt_in_profile", userId: input.senderId, replyTo: input.messageId },
+    ],
+  },
+  {
+    name: "opt_out_status",
+    pattern: /(К|к)ицюн(я|ю), ти мене знаєш\??/,
+    produce: (input) => [
+      { kind: "report_opt_out_status", userId: input.senderId, replyTo: input.messageId },
+    ],
+  },
+  {
     name: "list_gifs",
     pattern: /(К|к)ицюн(я|ю), які знаєш гіфки\?/,
     produce: (input, _match, state) => {

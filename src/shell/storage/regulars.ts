@@ -19,6 +19,7 @@ export type RegularsStore = {
   list: () => RegularProfile[];
   listByChat: (chatId: number) => RegularProfile[];
   remove: (userId: number, chatId: number) => boolean;
+  removeAllForUser: (userId: number) => number;
   setManualNotes: (userId: number, chatId: number, notes: string | null) => void;
 };
 
@@ -66,6 +67,7 @@ export function makeRegularsStore(db: Db): RegularsStore {
     "SELECT * FROM regulars WHERE chat_id = ? ORDER BY message_count DESC",
   );
   const deleteStmt = db.prepare("DELETE FROM regulars WHERE user_id = ? AND chat_id = ?");
+  const deleteAllForUserStmt = db.prepare("DELETE FROM regulars WHERE user_id = ?");
   const updateNotesStmt = db.prepare(
     "UPDATE regulars SET manual_notes = ? WHERE user_id = ? AND chat_id = ?",
   );
@@ -101,6 +103,11 @@ export function makeRegularsStore(db: Db): RegularsStore {
     remove: (userId, chatId) => {
       const result = deleteStmt.run(userId, chatId);
       return result.changes > 0;
+    },
+
+    removeAllForUser: (userId) => {
+      const result = deleteAllForUserStmt.run(userId);
+      return result.changes;
     },
 
     setManualNotes: (userId, chatId, notes) => {

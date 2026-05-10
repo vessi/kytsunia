@@ -3,6 +3,8 @@ import type { Action, MessageInput, MessageKind } from "../core/types.js";
 import type { InvokeLlmDeps } from "./llm/invoke.js";
 import { invokeLlmReply } from "./llm/invoke.js";
 import type { LlmCallStore } from "./storage/llm-calls.js";
+import type { OptOutsStore } from "./storage/opt-outs.js";
+import type { RegularsStore } from "./storage/regulars.js";
 import type { DynamicRuleStore } from "./storage/rules.js";
 
 export type ExecuteDeps = {
@@ -12,6 +14,8 @@ export type ExecuteDeps = {
   llmCallStore: LlmCallStore;
   defaultDailyLimit: number;
   invokeLlmDeps: InvokeLlmDeps;
+  optOutsStore: OptOutsStore;
+  regularsStore: RegularsStore;
 };
 
 export function toMessageInput(ctx: Context): MessageInput | null {
@@ -128,6 +132,35 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       } else {
         text = "Усе, на сьогодні нуль. Завтра.";
       }
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "opt_out_profile": {
+      if (deps.optOutsStore.isOptedOut(action.userId)) {
+        await ctx.reply("Я і так тебе не профайлю.", { reply_to_message_id: action.replyTo });
+        return;
+      }
+      deps.optOutsStore.optOut(action.userId);
+      const removed = deps.regularsStore.removeAllForUser(action.userId);
+      const note = removed > 0 ? " І стерла, що знала." : "";
+      await ctx.reply(`Окей, забула.${note} Більше не буду тебе вивчати.`, {
+        reply_to_message_id: action.replyTo,
+      });
+      return;
+    }
+    case "opt_in_profile": {
+      const wasOptedOut = deps.optOutsStore.optIn(action.userId);
+      const text = wasOptedOut
+        ? "Добре, можу знову. Профайл збереться, коли назбирається повідомлень."
+        : "Я і так тебе можу профайлити.";
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "report_opt_out_status": {
+      const optedOut = deps.optOutsStore.isOptedOut(action.userId);
+      const text = optedOut
+        ? "Ні, ти просив забути. Скажи «запамʼятай мене», щоб увімкнути назад."
+        : "Так, профайлю. Скажи «забудь мене», якщо не хочеш.";
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }

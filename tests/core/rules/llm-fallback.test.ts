@@ -19,6 +19,7 @@ function buildState(overrides: Partial<State["policy"]> = {}): State {
   return {
     dynamic: [],
     policy: { ...overrides },
+    optedOutUserIds: new Set(),
   };
 }
 

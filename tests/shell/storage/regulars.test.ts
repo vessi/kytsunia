@@ -104,6 +104,42 @@ describe("regularsStore", () => {
     expect(store.remove(999, 1)).toBe(false);
   });
 
+  it("removeAllForUser deletes profiles in every chat", () => {
+    store.upsert({
+      userId: 100,
+      chatId: 1,
+      displayName: "X",
+      profile: "p",
+      messageCount: 1,
+      lastMessageTs: 1,
+    });
+    store.upsert({
+      userId: 100,
+      chatId: 2,
+      displayName: "X",
+      profile: "p",
+      messageCount: 1,
+      lastMessageTs: 1,
+    });
+    store.upsert({
+      userId: 200,
+      chatId: 1,
+      displayName: "Y",
+      profile: "p",
+      messageCount: 1,
+      lastMessageTs: 1,
+    });
+
+    expect(store.removeAllForUser(100)).toBe(2);
+    expect(store.get(100, 1)).toBeNull();
+    expect(store.get(100, 2)).toBeNull();
+    expect(store.get(200, 1)).not.toBeNull();
+  });
+
+  it("removeAllForUser returns 0 for unknown user", () => {
+    expect(store.removeAllForUser(999)).toBe(0);
+  });
+
   it("setManualNotes updates only notes, not profile", () => {
     store.upsert({
       userId: 100,

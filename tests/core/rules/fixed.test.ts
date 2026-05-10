@@ -19,6 +19,7 @@ function buildState(overrides: Partial<State> = {}): State {
   return {
     dynamic: [],
     policy: {},
+    optedOutUserIds: new Set(),
     ...overrides,
   };
 }
@@ -326,5 +327,108 @@ describe("fixedRules: list_gifs", () => {
         expect(action.text).toBe("test\nanother");
       }
     }
+  });
+});
+
+describe("fixedRules: opt_out_profile", () => {
+  const rule = findRule("opt_out_profile");
+
+  it("matches plain phrase", () => {
+    expect(rule.pattern.test("Кицюня, забудь мене")).toBe(true);
+  });
+
+  it("matches with exclamation", () => {
+    expect(rule.pattern.test("Кицюня, забудь мене!")).toBe(true);
+  });
+
+  it("matches inside a longer sentence", () => {
+    expect(rule.pattern.test("Кицюня, забудь мене будь ласка")).toBe(true);
+  });
+
+  it("does not match longer word boundary like 'менеее'", () => {
+    expect(rule.pattern.test("Кицюня, забудь менеее")).toBe(false);
+  });
+
+  it("produces opt_out_profile action with sender id", () => {
+    const input = buildInput({
+      text: "Кицюня, забудь мене",
+      messageId: 42,
+      senderId: 777,
+    });
+    const m = rule.pattern.exec(input.text);
+    expect(m).not.toBeNull();
+    if (m) {
+      expect(rule.produce(input, m, buildState())).toEqual([
+        { kind: "opt_out_profile", userId: 777, replyTo: 42 },
+      ]);
+    }
+  });
+});
+
+describe("fixedRules: opt_in_profile", () => {
+  const rule = findRule("opt_in_profile");
+
+  it("matches with proper apostrophe ʼ", () => {
+    expect(rule.pattern.test("Кицюня, запамʼятай мене")).toBe(true);
+  });
+
+  it("matches with ascii apostrophe '", () => {
+    expect(rule.pattern.test("Кицюня, запам'ятай мене")).toBe(true);
+  });
+
+  it("produces opt_in_profile action", () => {
+    const input = buildInput({
+      text: "Кицюня, запамʼятай мене",
+      messageId: 42,
+      senderId: 777,
+    });
+    const m = rule.pattern.exec(input.text);
+    expect(m).not.toBeNull();
+    if (m) {
+      expect(rule.produce(input, m, buildState())).toEqual([
+        { kind: "opt_in_profile", userId: 777, replyTo: 42 },
+      ]);
+    }
+  });
+});
+
+describe("fixedRules: opt_out_status", () => {
+  const rule = findRule("opt_out_status");
+
+  it("matches with question mark", () => {
+    expect(rule.pattern.test("Кицюня, ти мене знаєш?")).toBe(true);
+  });
+
+  it("matches without question mark", () => {
+    expect(rule.pattern.test("Кицюня, ти мене знаєш")).toBe(true);
+  });
+
+  it("produces report_opt_out_status action", () => {
+    const input = buildInput({
+      text: "Кицюня, ти мене знаєш?",
+      messageId: 42,
+      senderId: 777,
+    });
+    const m = rule.pattern.exec(input.text);
+    expect(m).not.toBeNull();
+    if (m) {
+      expect(rule.produce(input, m, buildState())).toEqual([
+        { kind: "report_opt_out_status", userId: 777, replyTo: 42 },
+      ]);
+    }
+  });
+});
+
+// Перевіряємо, що "забудь мене.гіф" все ще йде через forget_gif (порядок rules).
+// Це гарантує, що додавання opt_out_profile нічого не зламало.
+describe("fixedRules: forget_gif vs opt_out_profile precedence", () => {
+  it("'забудь Х.гіф' не ловиться opt_out_profile", () => {
+    const optOut = findRule("opt_out_profile");
+    expect(optOut.pattern.test("Кицюня, забудь test.гіф")).toBe(false);
+  });
+
+  it("'забудь Х.стікер' не ловиться opt_out_profile", () => {
+    const optOut = findRule("opt_out_profile");
+    expect(optOut.pattern.test("Кицюня, забудь wow.стікер")).toBe(false);
   });
 });
