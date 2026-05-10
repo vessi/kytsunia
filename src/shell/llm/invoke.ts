@@ -91,6 +91,30 @@ function collectTriggerPhotos(ctx: Context, db: Db): PhotoRef[] {
 }
 
 /**
+ * Фото, на які поточне повідомлення посилається через reply_to.
+ *  - Альбом → всі сіблінги з DB.
+ *  - Одне фото → беремо file_id прямо з ctx.reply_to_message.
+ *  - Reply без фото → порожній масив.
+ *
+ * НАВМИСНО НЕ підтягуємо «просто з історії»: інакше моделі бачать фото на
+ * кожному текстовому реплаї і фіксуються на них (recency-photo-bias).
+ */
+function collectReplyTargetPhotos(ctx: Context, db: Db): PhotoRef[] {
+  const reply = ctx.message?.reply_to_message;
+  if (!reply) return [];
+  const chatId = ctx.message?.chat.id ?? 0;
+
+  if (reply.media_group_id) {
+    return getAlbumPhotoRefs(db, chatId, reply.media_group_id);
+  }
+  const largest = reply.photo?.at(-1);
+  if (largest) {
+    return [{ fileId: largest.file_id, uniqueId: largest.file_unique_id }];
+  }
+  return [];
+}
+
+/**
  * Завантажує фото з Telegram, толерантно до помилок: якщо одне впало (timeout,
  * deleted, etc.) — повертаємо null на його позиції, не валимо весь reply.
  */
@@ -174,81 +198,45 @@ export async function invokeLlmReply(
     deps.profilesLimit,
   );
 
-  // 5. Зібрати фото:
-  //    - trigger (поточне) — пріоритет, не обрізається історією
-  //    - history — fill remaining slots; обрізається до maxPhotosTotal
-  let triggerPhotoRefs = deps.visionEnabled ? collectTriggerPhotos(ctx, deps.db) : [];
-  // Альбом може бути довший за per-album cap — обрізаємо trigger.
-  if (triggerPhotoRefs.length > deps.maxPhotosPerAlbum) {
+  // 5. Зібрати фото — ТІЛЬКИ ті, на які явно посилаємось:
+  //    - trigger (поточне фото або альбом)
+  //    - reply target (фото в reply_to_message + сіблінги альбому)
+  //    Історичні фото свідомо не підтягуємо — інакше модель фіксується на них
+  //    при кожному наступному текстовому реплаї (recency-photo-bias).
+  const triggerRaw = deps.visionEnabled ? collectTriggerPhotos(ctx, deps.db) : [];
+  const replyRaw = deps.visionEnabled ? collectReplyTargetPhotos(ctx, deps.db) : [];
+
+  // Per-album cap до кожного джерела окремо.
+  const triggerPhotoRefs = triggerRaw.slice(0, deps.maxPhotosPerAlbum);
+  if (triggerRaw.length > triggerPhotoRefs.length) {
     deps.log.debug(
-      { had: triggerPhotoRefs.length, capped: deps.maxPhotosPerAlbum },
+      { had: triggerRaw.length, capped: deps.maxPhotosPerAlbum },
       "trigger album exceeds per-album cap",
     );
-    triggerPhotoRefs = triggerPhotoRefs.slice(0, deps.maxPhotosPerAlbum);
   }
-  // Якщо trigger один сам по собі вже >= total cap → жорстко обрізаємо
-  if (triggerPhotoRefs.length > deps.maxPhotosTotal) {
-    triggerPhotoRefs = triggerPhotoRefs.slice(0, deps.maxPhotosTotal);
-  }
-
-  // History photos (з recentRows) — кожен RecentMessageRow має .photos[].
-  // Recent повертається в хронологічному порядку (oldest first), тож для
-  // recency-priority при fill ми йдемо з кінця.
-  const remainingSlots = deps.visionEnabled
-    ? Math.max(0, deps.maxPhotosTotal - triggerPhotoRefs.length)
-    : 0;
-
-  // Збираємо history photos з пріоритетом «новіші виграють».
-  const historyPhotosNewestFirst: Array<PhotoRef & { rowIdx: number }> = [];
-  for (let i = recentRows.length - 1; i >= 0; i--) {
-    const row = recentRows[i];
-    if (!row) continue;
-    let added = 0;
-    for (const p of row.photos) {
-      if (historyPhotosNewestFirst.length >= remainingSlots) break;
-      if (added >= deps.maxPhotosPerAlbum) break;
-      historyPhotosNewestFirst.push({ fileId: p.fileId, uniqueId: p.uniqueId, rowIdx: i });
-      added++;
-    }
-    if (historyPhotosNewestFirst.length >= remainingSlots) break;
-  }
-  // Дедуплікуємо: якщо trigger photo вже в історії (rare), не качаємо двічі.
   const triggerUniqueIds = new Set(triggerPhotoRefs.map((p) => p.uniqueId));
-  const historyFiltered = historyPhotosNewestFirst.filter((p) => !triggerUniqueIds.has(p.uniqueId));
+  const replyDeduped = replyRaw.filter((p) => !triggerUniqueIds.has(p.uniqueId));
+  const replyPhotoRefs = replyDeduped.slice(0, deps.maxPhotosPerAlbum);
+
+  // Total cap: trigger має пріоритет.
+  const allRefs = [...triggerPhotoRefs, ...replyPhotoRefs].slice(0, deps.maxPhotosTotal);
 
   // 6. Завантаження байтів (паралельно, толерантно).
-  const [triggerFetched, historyFetched] = await Promise.all([
-    fetchPhotosTolerant(triggerPhotoRefs, deps.photoFetcher, deps.log),
-    fetchPhotosTolerant(
-      historyFiltered.map((p) => ({ fileId: p.fileId, uniqueId: p.uniqueId })),
-      deps.photoFetcher,
-      deps.log,
-    ),
-  ]);
+  const fetched = await fetchPhotosTolerant(allRefs, deps.photoFetcher, deps.log);
 
-  // 7. Збираємо RecentMessage[] для buildLlmRequest, проставляючи завантажені фото
-  //    в правильні рядки.
-  const fetchedByRowIdx = new Map<number, FetchedPhoto[]>();
-  for (let i = 0; i < historyFiltered.length; i++) {
-    const ref = historyFiltered[i];
-    const got = historyFetched[i];
-    if (!ref || !got) continue;
-    const arr = fetchedByRowIdx.get(ref.rowIdx);
-    if (arr) arr.push(got);
-    else fetchedByRowIdx.set(ref.rowIdx, [got]);
-  }
-
-  const recent: RecentMessage[] = recentRows.map((row, idx) => {
-    const photos = (fetchedByRowIdx.get(idx) ?? []).map((f) => ({
-      mime: f.mime,
-      base64: f.base64,
-    }));
-    return { senderName: row.senderName, text: row.text, photos };
-  });
-
-  const currentPhotos = triggerFetched
+  // 7. Всі фото йдуть як attachments поточного повідомлення. Для моделі це
+  //    «фото, які стосуються цього питання» — і trigger, і reply-target
+  //    логічно належать до того, на що користувач зараз дивиться.
+  //    Recent історія не несе фото-блоків, тільки текст.
+  const currentPhotos = fetched
     .filter((p): p is FetchedPhoto => p !== null)
     .map((f) => ({ mime: f.mime, base64: f.base64 }));
+
+  const recent: RecentMessage[] = recentRows.map((row) => ({
+    senderName: row.senderName,
+    text: row.text,
+    photos: [],
+  }));
 
   const { system, userMessage } = buildLlmRequest(
     { senderName: userName, text, photos: currentPhotos },
@@ -283,7 +271,7 @@ export async function invokeLlmReply(
         inputTokens: reply.inputTokens,
         outputTokens: reply.outputTokens,
         cost,
-        photosSent: currentPhotos.length + recent.reduce((a, r) => a + (r.photos?.length ?? 0), 0),
+        photosSent: currentPhotos.length,
       },
       "llm reply ok",
     );

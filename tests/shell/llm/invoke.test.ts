@@ -251,16 +251,19 @@ describe("invokeLlmReply: vision", () => {
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
-  it("history photos fill remaining slots after trigger", async () => {
+  it("text-only message does NOT pull photos from history", async () => {
+    // Регресія: раніше historical photos підтягувались на кожен reply і модель
+    // фіксувалась на них (recency-photo-bias).
+    const { client, calls } = makeFakeLlm();
     const fetcher = vi
       .fn()
       .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
-    const deps = makeBaseDeps({ photoFetcher: fetcher, maxPhotosTotal: 4 });
+    const deps = makeBaseDeps({ llmClient: client, photoFetcher: fetcher });
     dbsToClose.push(deps.db);
 
+    // В історії є фото
     const append = makeMessageAppender(deps.db);
-    // 5 окремих історичних фото
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       append({
         chatId: 1,
         messageId: 100 + i,
@@ -273,23 +276,127 @@ describe("invokeLlmReply: vision", () => {
         photoUniqueId: `huid${i}`,
       });
     }
-    // Trigger з одним фото (НЕ зберігаємо в DB як trigger msg=999, exclude бере з ctx)
-    const { ctx } = makeCtx({
-      caption: "ну",
-      photo: [{ file_id: "fT", file_unique_id: "uT" }],
-    });
+    // Тригер — звичайний текст без фото і без reply
+    const { ctx } = makeCtx({ text: "ну і що там з погодою" });
     await invokeLlmReply(ctx, 999, deps);
 
-    // total=4, trigger=1 → history=3 (newest 3: hist4, hist3, hist2)
-    expect(fetcher).toHaveBeenCalledTimes(4);
-    const allUniq = (fetcher as unknown as { mock: { calls: string[][] } }).mock.calls.map(
-      (c) => c[1],
-    );
-    expect(allUniq).toContain("uT");
-    expect(allUniq).toContain("huid4");
-    expect(allUniq).toContain("huid3");
-    expect(allUniq).toContain("huid2");
-    expect(allUniq).not.toContain("huid0");
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(typeof calls[0]?.content).toBe("string");
+  });
+
+  it("includes reply target photo even when current message is text-only", async () => {
+    const { client, calls } = makeFakeLlm();
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
+    const deps = makeBaseDeps({ llmClient: client, photoFetcher: fetcher });
+    dbsToClose.push(deps.db);
+
+    // reply_to_message з фото — конструюємо ctx вручну
+    const reply = vi.fn().mockResolvedValue({});
+    const ctx = {
+      message: {
+        message_id: 999,
+        chat: { id: 1 },
+        from: { id: 7, first_name: "A" },
+        date: 0,
+        text: "це що за порода?",
+        reply_to_message: {
+          message_id: 50,
+          photo: [
+            { file_id: "rs", file_unique_id: "ru_s" },
+            { file_id: "rl", file_unique_id: "ru_l" },
+          ],
+        },
+      },
+      chat: { id: 1 },
+      from: { id: 7 },
+      reply,
+    } as unknown as Context;
+
+    await invokeLlmReply(ctx, 999, deps);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith("rl", "ru_l"); // найбільший
+    const blocks = calls[0]?.content as Array<{ type: string }>;
+    expect(blocks.filter((b) => b.type === "image")).toHaveLength(1);
+  });
+
+  it("expands reply target album from DB", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
+    const deps = makeBaseDeps({ photoFetcher: fetcher });
+    dbsToClose.push(deps.db);
+
+    // Альбом в DB
+    const append = makeMessageAppender(deps.db);
+    for (let i = 0; i < 3; i++) {
+      append({
+        chatId: 1,
+        messageId: 50 + i,
+        ts: 50 + i,
+        senderId: 8,
+        senderName: "Anna",
+        text: i === 0 ? "ось" : "",
+        kind: "photo",
+        photoFileId: `ra${i}`,
+        photoUniqueId: `rau${i}`,
+        mediaGroupId: "ralbum",
+      });
+    }
+
+    const reply = vi.fn().mockResolvedValue({});
+    const ctx = {
+      message: {
+        message_id: 999,
+        chat: { id: 1 },
+        from: { id: 7, first_name: "A" },
+        date: 0,
+        text: "?",
+        reply_to_message: {
+          message_id: 50,
+          media_group_id: "ralbum",
+          photo: [{ file_id: "ra0", file_unique_id: "rau0" }],
+        },
+      },
+      chat: { id: 1 },
+      from: { id: 7 },
+      reply,
+    } as unknown as Context;
+
+    await invokeLlmReply(ctx, 999, deps);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("dedupes when trigger and reply share a photo", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
+    const deps = makeBaseDeps({ photoFetcher: fetcher });
+    dbsToClose.push(deps.db);
+
+    const reply = vi.fn().mockResolvedValue({});
+    const ctx = {
+      message: {
+        message_id: 999,
+        chat: { id: 1 },
+        from: { id: 7, first_name: "A" },
+        date: 0,
+        caption: "ну",
+        photo: [{ file_id: "shared", file_unique_id: "shared_u" }],
+        reply_to_message: {
+          message_id: 50,
+          photo: [{ file_id: "shared", file_unique_id: "shared_u" }],
+        },
+      },
+      chat: { id: 1 },
+      from: { id: 7 },
+      reply,
+    } as unknown as Context;
+
+    await invokeLlmReply(ctx, 999, deps);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("tolerates failed photo fetch (skips, does not throw)", async () => {
