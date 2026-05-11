@@ -9,7 +9,7 @@ const X_RE = /https:\/\/(www\.)?(x|twitter)\.com\/(.*)\/?/;
 export function rewriteInstagramUrl(text: string): string | null {
   const m = INSTAGRAM_RE.exec(text);
   if (!m?.[2]) return null;
-  return `https://ddinstagram.com/${m[2]}`;
+  return `https://eeinstagram.com/${m[2]}`;
 }
 
 export function rewriteXUrl(text: string): string | null {

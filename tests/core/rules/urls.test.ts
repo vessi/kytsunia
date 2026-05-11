@@ -9,19 +9,19 @@ import type { MessageInput } from "../../../src/core/types.js";
 describe("rewriteInstagramUrl", () => {
   it("rewrites a bare instagram link", () => {
     expect(rewriteInstagramUrl("https://instagram.com/p/abc123/")).toBe(
-      "https://ddinstagram.com/p/abc123/",
+      "https://eeinstagram.com/p/abc123/",
     );
   });
 
   it("rewrites a www.instagram.com link", () => {
     expect(rewriteInstagramUrl("https://www.instagram.com/p/abc123")).toBe(
-      "https://ddinstagram.com/p/abc123",
+      "https://eeinstagram.com/p/abc123",
     );
   });
 
   it("captures multi-segment path", () => {
     expect(rewriteInstagramUrl("https://instagram.com/user/reel/12345")).toBe(
-      "https://ddinstagram.com/user/reel/12345",
+      "https://eeinstagram.com/user/reel/12345",
     );
   });
 
@@ -37,7 +37,7 @@ describe("rewriteInstagramUrl", () => {
     // Зберігаємо поведінку оригіналу: regex не має $-якоря,
     // знаходить URL як підрядок.
     expect(rewriteInstagramUrl("дивись що знайшов: https://instagram.com/p/xxx тут смішно")).toBe(
-      "https://ddinstagram.com/p/xxx тут смішно",
+      "https://eeinstagram.com/p/xxx тут смішно",
     );
     // Так, "тут смішно" потрапить у вихідний URL.
     // Це не баг рефакторингу, а збережена поведінка.
@@ -93,7 +93,7 @@ describe("matchUrlRewrites", () => {
     const result = matchUrlRewrites(buildInput("https://instagram.com/p/abc", 42));
     expect(result?.[0]?.kind).toBe("reply_text");
     if (result?.[0]?.kind === "reply_text") {
-      expect(result[0].text).toBe("https://ddinstagram.com/p/abc");
+      expect(result[0].text).toBe("https://eeinstagram.com/p/abc");
       expect(result[0].replyTo).toBe(42);
     }
   });
