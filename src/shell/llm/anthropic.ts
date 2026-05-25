@@ -24,9 +24,19 @@ export type TextContent = {
 
 export type UserContent = string | Array<TextContent | ImageContent>;
 
+// Anthropic system-блок. cache_control: ephemeral робить префікс кандидатом на
+// prompt cache (TTL 5 хв). Ставити лише на стабільну частину префікса.
+export type SystemBlock = {
+  type: "text";
+  text: string;
+  cache_control?: { type: "ephemeral" };
+};
+
+export type SystemContent = string | SystemBlock[];
+
 export type LlmClient = {
   reply: (
-    system: string,
+    system: SystemContent,
     userMessage: UserContent,
     model: string,
     maxTokens?: number,

@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { buildLlmRequest } from "../../../src/shell/llm/context.js";
 
+function joinSystem(system: ReadonlyArray<{ text: string }>): string {
+  return system.map((b) => b.text).join("\n\n");
+}
+
 describe("buildLlmRequest", () => {
   it("includes persona alone when no recent messages", () => {
     const req = buildLlmRequest({ senderName: "Andriy", text: "привіт" }, [], "PERSONA");
-    expect(req.system).toBe("PERSONA");
+    expect(req.system).toHaveLength(1);
+    expect(req.system[0]?.text).toBe("PERSONA");
     expect(req.userMessage).toBe("Andriy: привіт");
+  });
+
+  it("puts cache_control on persona block only", () => {
+    const req = buildLlmRequest(
+      { senderName: "Andriy", text: "привіт" },
+      [{ senderName: "Olha", text: "тут" }],
+      "PERSONA",
+      [{ displayName: "Andriy", profile: "PROFILE" }],
+    );
+    expect(req.system).toHaveLength(2);
+    expect(req.system[0]?.cache_control).toEqual({ type: "ephemeral" });
+    expect(req.system[1]?.cache_control).toBeUndefined();
   });
 
   it("appends recent context after persona", () => {
@@ -17,9 +34,10 @@ describe("buildLlmRequest", () => {
       ],
       "PERSONA",
     );
-    expect(req.system).toContain("PERSONA");
-    expect(req.system).toContain("Olha: доброго дня");
-    expect(req.system).toContain("Stepan: як справи");
+    const text = joinSystem(req.system);
+    expect(text).toContain("PERSONA");
+    expect(text).toContain("Olha: доброго дня");
+    expect(text).toContain("Stepan: як справи");
     expect(req.userMessage).toBe("Andriy: привіт");
   });
 
@@ -27,9 +45,10 @@ describe("buildLlmRequest", () => {
     const req = buildLlmRequest({ senderName: "Andriy", text: "привіт" }, [], "PERSONA", [
       { displayName: "Andriy", profile: "Snarky engineer." },
     ]);
-    expect(req.system).toContain("PERSONA");
-    expect(req.system).toContain("Профілі учасників");
-    expect(req.system).toContain("Snarky engineer.");
+    const text = joinSystem(req.system);
+    expect(text).toContain("PERSONA");
+    expect(text).toContain("Профілі учасників");
+    expect(text).toContain("Snarky engineer.");
   });
 
   it("orders sections persona → profiles → recent", () => {
@@ -39,11 +58,26 @@ describe("buildLlmRequest", () => {
       "PERSONA",
       [{ displayName: "Andriy", profile: "PROFILE" }],
     );
-    const personaIdx = req.system.indexOf("PERSONA");
-    const profileIdx = req.system.indexOf("PROFILE");
-    const contextIdx = req.system.indexOf("Контекст");
+    const text = joinSystem(req.system);
+    const personaIdx = text.indexOf("PERSONA");
+    const profileIdx = text.indexOf("PROFILE");
+    const contextIdx = text.indexOf("Контекст");
     expect(personaIdx).toBeLessThan(profileIdx);
     expect(profileIdx).toBeLessThan(contextIdx);
+  });
+
+  it("keeps persona as a separate block from the mutable tail", () => {
+    const req = buildLlmRequest(
+      { senderName: "Andriy", text: "?" },
+      [{ senderName: "Olha", text: "тут" }],
+      "PERSONA",
+      [{ displayName: "Andriy", profile: "PROFILE" }],
+    );
+    // Persona не повинна мати в собі ні profile, ні recent — щоб кеш-префікс
+    // не зсувався при кожному повідомленні.
+    expect(req.system[0]?.text).toBe("PERSONA");
+    expect(req.system[1]?.text).toContain("PROFILE");
+    expect(req.system[1]?.text).toContain("Контекст");
   });
 
   // ─── Vision ──────────────────────────────────────────────────────────
@@ -109,8 +143,9 @@ describe("buildLlmRequest", () => {
     expect(images.map((i) => i.source.data)).toEqual(["OLHA1", "ST1", "ST2", "CUR"]);
 
     // Маркери в системі (history) і в user-text (current)
-    expect(req.system).toContain("Olha: [фото 1]");
-    expect(req.system).toContain("Stepan: [фото 2-3]");
+    const systemText = joinSystem(req.system);
+    expect(systemText).toContain("Olha: [фото 1]");
+    expect(systemText).toContain("Stepan: [фото 2-3]");
     const userText = (blocks.find((b) => b.type === "text") as { text: string }).text;
     expect(userText).toContain("Andriy: [фото 4]");
   });

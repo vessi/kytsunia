@@ -1,4 +1,4 @@
-import type { ImageContent, UserContent } from "./anthropic.js";
+import type { ImageContent, SystemBlock, UserContent } from "./anthropic.js";
 import type { ProfileEntry } from "./profiles.js";
 
 export type RecentMessage = {
@@ -16,7 +16,10 @@ export type CurrentMessage = {
 };
 
 export type LlmRequest = {
-  system: string;
+  // Масив, бо persona йде окремим блоком з cache_control: ephemeral, а
+  // profiles+recent (мінливий хвіст) — окремим без кешу. Anthropic кешує
+  // префікс до останнього блоку з cache_control включно.
+  system: SystemBlock[];
   userMessage: UserContent;
 };
 
@@ -50,13 +53,6 @@ export function buildLlmRequest(
   persona: string,
   profiles: readonly ProfileEntry[] = [],
 ): LlmRequest {
-  const sections = [persona];
-
-  if (profiles.length > 0) {
-    const profilesText = profiles.map((p) => `${p.displayName}:\n${p.profile}`).join("\n\n");
-    sections.push(`Профілі учасників (для розуміння стилю і інтересів):\n\n${profilesText}`);
-  }
-
   // Маркери [фото N] нумеруються глобально, синхронно з порядком image-blocks
   // нижче (історія в хронологічному порядку, потім поточні фото).
   let photoCounter = 1;
@@ -71,11 +67,25 @@ export function buildLlmRequest(
     recentLines.push(`${m.senderName}: ${marker}${m.text}`.trimEnd());
   }
 
+  // System розколотий на два блоки:
+  //   [0] persona — стабільний префікс, кешуємо.
+  //   [1] profiles + recent — мінливий хвіст, без кешу.
+  // Якщо хвіст порожній — другий блок не додаємо, щоб не платити за порожній text.
+  const tailSections: string[] = [];
+  if (profiles.length > 0) {
+    const profilesText = profiles.map((p) => `${p.displayName}:\n${p.profile}`).join("\n\n");
+    tailSections.push(`Профілі учасників (для розуміння стилю і інтересів):\n\n${profilesText}`);
+  }
   if (recentLines.length > 0) {
-    sections.push(`Контекст останніх повідомлень у чаті:\n${recentLines.join("\n")}`);
+    tailSections.push(`Контекст останніх повідомлень у чаті:\n${recentLines.join("\n")}`);
   }
 
-  const system = sections.join("\n\n");
+  const system: SystemBlock[] = [
+    { type: "text", text: persona, cache_control: { type: "ephemeral" } },
+  ];
+  if (tailSections.length > 0) {
+    system.push({ type: "text", text: tailSections.join("\n\n") });
+  }
 
   // Поточне повідомлення.
   const currentPhotos = current.photos ?? [];
@@ -83,7 +93,7 @@ export function buildLlmRequest(
   for (const p of currentPhotos) allImages.push(toImageBlock(p));
   const currentText = `${current.senderName}: ${currentMarker}${current.text}`.trimEnd();
 
-  // Back-compat: якщо ніде немає фото — повертаємо string, як раніше.
+  // Back-compat: якщо ніде немає фото — userMessage як string, як раніше.
   if (allImages.length === 0) {
     return { system, userMessage: currentText };
   }

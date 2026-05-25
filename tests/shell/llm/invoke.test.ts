@@ -1,7 +1,12 @@
 import type { Context } from "grammy";
 import { pino } from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LlmClient, LlmReply, UserContent } from "../../../src/shell/llm/anthropic.js";
+import type {
+  LlmClient,
+  LlmReply,
+  SystemContent,
+  UserContent,
+} from "../../../src/shell/llm/anthropic.js";
 import { type InvokeLlmDeps, invokeLlmReply } from "../../../src/shell/llm/invoke.js";
 import type { PhotoFetcher } from "../../../src/shell/llm/telegram-photos.js";
 import { makeMessageAppender } from "../../../src/shell/storage/messages.js";
@@ -9,7 +14,7 @@ import { openTestDb } from "../../helpers/db.js";
 
 const silentLog = pino({ level: "silent" });
 
-type CapturedReply = { system: string; content: UserContent };
+type CapturedReply = { system: SystemContent; content: UserContent };
 
 function makeFakeLlm(): { client: LlmClient; calls: CapturedReply[] } {
   const calls: CapturedReply[] = [];
