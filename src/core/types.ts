@@ -59,6 +59,10 @@ export type DynamicRuleSpec = {
 export type Policy = {
   adminUserId?: number;
   botUserId?: number;
+  // Telegram-username бота без @, наприклад "kytsynia_bot". Заповнюється з
+  // bot.botInfo.username при старті. Якщо undefined — тригер по @mention
+  // вимкнено (наприклад у тестах без живого Telegram).
+  botUsername?: string;
 };
 
 export type State = {

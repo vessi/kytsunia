@@ -109,6 +109,7 @@ bot.on("message", async (ctx) => {
     policy: {
       ...(config.ADMIN_USER_ID !== undefined ? { adminUserId: config.ADMIN_USER_ID } : {}),
       botUserId,
+      ...(bot.botInfo.username ? { botUsername: bot.botInfo.username } : {}),
     },
     optedOutUserIds: new Set(optOutsStore.list()),
   };

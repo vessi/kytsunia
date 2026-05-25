@@ -71,4 +71,51 @@ describe("matchLlmFallback", () => {
     });
     expect(matchLlmFallback(input, buildState())).toBeNull();
   });
+
+  it("matches @botUsername mention", () => {
+    const result = matchLlmFallback(
+      buildInput({ text: "@kytsynia_bot як справи?" }),
+      buildState({ botUsername: "kytsynia_bot" }),
+    );
+    expect(result?.[0]?.kind).toBe("invoke_llm_reply");
+  });
+
+  it("matches @botUsername case-insensitively", () => {
+    const result = matchLlmFallback(
+      buildInput({ text: "слухай @Kytsynia_Bot а що ти" }),
+      buildState({ botUsername: "kytsynia_bot" }),
+    );
+    expect(result?.[0]?.kind).toBe("invoke_llm_reply");
+  });
+
+  it("does not match a different bot's username", () => {
+    const result = matchLlmFallback(
+      buildInput({ text: "@other_bot привіт" }),
+      buildState({ botUsername: "kytsynia_bot" }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("does not match when @username is embedded in a word", () => {
+    // Email-подібний рядок не має тригерити.
+    const result = matchLlmFallback(
+      buildInput({ text: "пиши на user@kytsynia_bot.example" }),
+      buildState({ botUsername: "kytsynia_bot" }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("does not match suffix of @username", () => {
+    // @kytsynia_bot_helper не повинен тригерити @kytsynia_bot.
+    const result = matchLlmFallback(
+      buildInput({ text: "@kytsynia_bot_helper тут" }),
+      buildState({ botUsername: "kytsynia_bot" }),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("ignores mention when botUsername is not configured", () => {
+    const result = matchLlmFallback(buildInput({ text: "@kytsynia_bot привіт" }), buildState());
+    expect(result).toBeNull();
+  });
 });
