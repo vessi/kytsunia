@@ -1,5 +1,7 @@
 import { type Context, InputFile } from "grammy";
 import type { Action, MessageInput, MessageKind } from "../core/types.js";
+import type { InvokeDigestDeps } from "./llm/digest.js";
+import { invokeDigest } from "./llm/digest.js";
 import type { InvokeLlmDeps } from "./llm/invoke.js";
 import { invokeLlmReply } from "./llm/invoke.js";
 import type { LlmCallStore } from "./storage/llm-calls.js";
@@ -14,6 +16,7 @@ export type ExecuteDeps = {
   llmCallStore: LlmCallStore;
   defaultDailyLimit: number;
   invokeLlmDeps: InvokeLlmDeps;
+  invokeDigestDeps: InvokeDigestDeps;
   optOutsStore: OptOutsStore;
   regularsStore: RegularsStore;
 };
@@ -182,6 +185,10 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
     }
     case "invoke_llm_reply":
       await invokeLlmReply(ctx, action.replyTo, deps.invokeLlmDeps);
+      return;
+
+    case "invoke_digest":
+      await invokeDigest(ctx, action.replyTo, action.count, deps.invokeDigestDeps);
       return;
   }
 }

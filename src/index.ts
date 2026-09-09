@@ -4,8 +4,9 @@ import { match } from "./core/matcher.js";
 import type { State } from "./core/types.js";
 import { loadInsults } from "./shell/insults.js";
 import { makeLlmClient } from "./shell/llm/anthropic.js";
+import type { InvokeDigestDeps } from "./shell/llm/digest.js";
 import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
-import { PERSONA_PROMPT } from "./shell/llm/persona.js";
+import { DIGEST_PROMPT, PERSONA_PROMPT } from "./shell/llm/persona.js";
 import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
 import { openDb } from "./shell/storage/db.js";
@@ -91,6 +92,30 @@ const invokeLlmDeps: InvokeLlmDeps = {
   botName,
 };
 
+const invokeDigestDeps: InvokeDigestDeps = {
+  enabled: config.KYTSUNIA_DIGEST_ENABLED,
+  llmClient,
+  llmCallStore,
+  db,
+  model: config.KYTSUNIA_DIGEST_MODEL,
+  prompt: DIGEST_PROMPT,
+  defaultCount: config.KYTSUNIA_DIGEST_DEFAULT_COUNT,
+  maxCount: config.KYTSUNIA_DIGEST_MAX_COUNT,
+  weight: config.KYTSUNIA_DIGEST_WEIGHT,
+  defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
+  globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
+  log,
+};
+
+log.info(
+  {
+    enabled: config.KYTSUNIA_DIGEST_ENABLED,
+    model: config.KYTSUNIA_DIGEST_MODEL,
+    defaultCount: config.KYTSUNIA_DIGEST_DEFAULT_COUNT,
+  },
+  "digest configured",
+);
+
 bot.on("message", async (ctx) => {
   const input = toMessageInput(ctx);
   if (!input) return;
@@ -125,6 +150,7 @@ bot.on("message", async (ctx) => {
         llmCallStore,
         defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
         invokeLlmDeps,
+        invokeDigestDeps,
         optOutsStore,
         regularsStore,
       });

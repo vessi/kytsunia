@@ -185,6 +185,23 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, дайджест», «Кицюня, дай дайджест за 300», «Кицюня, дайджест 50».
+    // Число опційне — без нього shell підставить дефолт із конфіга.
+    name: "digest",
+    pattern: /(К|к)ицюн(я|ю), (?:дай )?дайджест(?:\s+(?:за\s+)?(\d+))?/,
+    produce: (input, match) => {
+      const raw = match[3];
+      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+      return [
+        {
+          kind: "invoke_digest",
+          replyTo: input.messageId,
+          ...(Number.isNaN(parsed) ? {} : { count: parsed }),
+        },
+      ];
+    },
+  },
+  {
     name: "rate_status",
     pattern: /(К|к)ицюн(я|ю), скільки в мене лишилось\??/,
     produce: (input) => [

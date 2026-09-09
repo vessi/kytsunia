@@ -48,7 +48,10 @@ export type Action =
   | { kind: "opt_out_profile"; userId: number; replyTo: number }
   | { kind: "opt_in_profile"; userId: number; replyTo: number }
   | { kind: "report_opt_out_status"; userId: number; replyTo: number }
-  | { kind: "invoke_llm_reply"; replyTo: number };
+  | { kind: "invoke_llm_reply"; replyTo: number }
+  // count відсутній — беремо дефолт із конфіга. Клампимо до максимуму вже в
+  // shell, щоб core лишався без знання про env.
+  | { kind: "invoke_digest"; replyTo: number; count?: number };
 
 export type DynamicRuleSpec = {
   pattern: string;

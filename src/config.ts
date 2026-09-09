@@ -40,6 +40,21 @@ const envSchema = z.object({
   // за останні N мс. Покриває «постив фото, тегаю Кицюню без reply».
   // Короткий TTL щоб не повертатись до recency-bias.
   KYTSUNIA_VISION_TTL_MS: envValue(z.coerce.number().int().nonnegative().default(120_000)),
+  // Дайджест: переказ останніх N повідомлень чату.
+  KYTSUNIA_DIGEST_ENABLED: envValue(
+    z
+      .string()
+      .default("true")
+      .transform((v) => v === "true" || v === "1"),
+  ),
+  // Скільки повідомлень брати, коли число не назвали явно.
+  KYTSUNIA_DIGEST_DEFAULT_COUNT: envValue(z.coerce.number().int().positive().default(300)),
+  // Стеля на явно назване число. 500 повідомлень ≈ 20k вхідних токенів.
+  KYTSUNIA_DIGEST_MAX_COUNT: envValue(z.coerce.number().int().positive().default(500)),
+  // Окрема модель: haiku помітно гірше узагальнює довгий тред.
+  KYTSUNIA_DIGEST_MODEL: envValue(z.string().default("claude-sonnet-5")),
+  // Скільки слотів добового ліміту зʼїдає один дайджест.
+  KYTSUNIA_DIGEST_WEIGHT: envValue(z.coerce.number().int().positive().default(3)),
 });
 
 export type Config = z.infer<typeof envSchema>;

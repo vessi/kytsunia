@@ -36,6 +36,41 @@ describe("llmCallStore", () => {
     });
   });
 
+  describe("weight", () => {
+    const base = {
+      ts: Date.now(),
+      chatId: 1,
+      userId: 100,
+      userName: "test",
+      triggerMsgId: 50,
+      model: "claude-haiku-4-5",
+      status: "ok" as const,
+    };
+
+    it("defaults to 1 when not given", () => {
+      store.record(base);
+      const row = db.prepare("SELECT weight FROM llm_calls").get() as { weight: number };
+      expect(row.weight).toBe(1);
+    });
+
+    it("counts toward the user limit by weight, not by call count", () => {
+      store.record({ ...base, weight: 3 });
+      const status = store.checkUserRate(100, 15);
+      expect(status.used).toBe(3);
+    });
+
+    it("counts toward the global cap by weight", () => {
+      store.record({ ...base, weight: 3 });
+      store.record({ ...base, userId: 200, weight: 1 });
+      expect(store.checkGlobalRate(150).used).toBe(4);
+    });
+
+    it("ignores weight of non-ok calls", () => {
+      store.record({ ...base, status: "error", weight: 3 });
+      expect(store.checkUserRate(100, 15).used).toBe(0);
+    });
+  });
+
   describe("checkUserRate", () => {
     it("uses default limit when user has no override", () => {
       const status = store.checkUserRate(100, 15);

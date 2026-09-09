@@ -21,3 +21,28 @@ export function startOfKyivDay(now: Date = new Date()): number {
   const elapsedMs = (hour * 3600 + minute * 60 + second) * 1000;
   return now.getTime() - elapsedMs;
 }
+
+/**
+ * Час у форматі HH:MM за київським часом. Для транскриптів у дайджесті.
+ */
+export function formatKyivTime(ts: number): string {
+  return new Intl.DateTimeFormat("uk-UA", {
+    timeZone: "Europe/Kyiv",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(ts));
+}
+
+/**
+ * Дата у форматі DD.MM.YYYY за київським часом. Використовується і як
+ * роздільник днів у транскрипті, і як ключ для порівняння «той самий день».
+ */
+export function formatKyivDate(ts: number): string {
+  return new Intl.DateTimeFormat("uk-UA", {
+    timeZone: "Europe/Kyiv",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(ts));
+}

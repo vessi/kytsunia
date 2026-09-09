@@ -432,3 +432,48 @@ describe("fixedRules: forget_gif vs opt_out_profile precedence", () => {
     expect(optOut.pattern.test("Кицюня, забудь wow.стікер")).toBe(false);
   });
 });
+
+describe("fixedRules: digest", () => {
+  const rule = findRule("digest");
+
+  function produce(text: string) {
+    const m = rule.pattern.exec(text);
+    expect(m).not.toBeNull();
+    if (!m) throw new Error("no match");
+    return rule.produce(buildInput({ text }), m, buildState());
+  }
+
+  it("matches bare дайджест without a count", () => {
+    expect(produce("Кицюня, дайджест")).toEqual([{ kind: "invoke_digest", replyTo: 100 }]);
+  });
+
+  it("matches «дай дайджест»", () => {
+    expect(rule.pattern.test("Кицюня, дай дайджест")).toBe(true);
+  });
+
+  it("matches vocative and lowercase", () => {
+    expect(rule.pattern.test("кицюню, дайджест")).toBe(true);
+  });
+
+  it("parses «за N»", () => {
+    expect(produce("Кицюня, дайджест за 300")).toEqual([
+      { kind: "invoke_digest", replyTo: 100, count: 300 },
+    ]);
+  });
+
+  it("parses a bare number without «за»", () => {
+    expect(produce("Кицюня, дай дайджест 50")).toEqual([
+      { kind: "invoke_digest", replyTo: 100, count: 50 },
+    ]);
+  });
+
+  it("omits count when the trailing token is not a number", () => {
+    expect(produce("Кицюня, дайджест за сьогодні")).toEqual([
+      { kind: "invoke_digest", replyTo: 100 },
+    ]);
+  });
+
+  it("does not match a different word", () => {
+    expect(rule.pattern.test("Кицюня, дай джем")).toBe(false);
+  });
+});

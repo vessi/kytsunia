@@ -18,6 +18,13 @@ const PRICING: Record<string, Pricing> = {
     cacheRead: 0.3,
     cacheWrite: 3.75,
   },
+  // Дефолтна модель дайджесту. Дешевша за sonnet-4-6 і свіжіша.
+  "claude-sonnet-5": {
+    input: 2.0,
+    output: 10.0,
+    cacheRead: 0.2,
+    cacheWrite: 2.5,
+  },
 };
 
 export type Usage = {

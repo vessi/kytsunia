@@ -17,6 +17,9 @@ export type CallRecord = {
   status: CallStatus;
   costUsd?: number;
   errorMessage?: string;
+  // Скільки «слотів» добового ліміту зʼїдає виклик. Звичайний реплай — 1,
+  // дайджест — більше, бо тягне сотні повідомлень у контекст.
+  weight?: number;
 };
 
 export type RateCheck = {
@@ -49,16 +52,18 @@ export function makeLlmCallStore(db: Db): LlmCallStore {
     INSERT INTO llm_calls (
       ts, chat_id, user_id, user_name, trigger_msg_id,
       model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-      status, cost_usd, error_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      status, cost_usd, error_message, weight
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const userLimitStmt = db.prepare("SELECT daily_limit FROM user_limits WHERE user_id = ?");
+  // SUM(weight), не COUNT(*) — важкі виклики (дайджест) мають зʼїдати більше
+  // ліміту, ніж односкладний реплай.
   const userUsedStmt = db.prepare(
-    "SELECT COUNT(*) as n FROM llm_calls WHERE user_id = ? AND ts >= ? AND status = 'ok'",
+    "SELECT COALESCE(SUM(weight), 0) as n FROM llm_calls WHERE user_id = ? AND ts >= ? AND status = 'ok'",
   );
   const globalUsedStmt = db.prepare(
-    "SELECT COUNT(*) as n FROM llm_calls WHERE ts >= ? AND status = 'ok'",
+    "SELECT COALESCE(SUM(weight), 0) as n FROM llm_calls WHERE ts >= ? AND status = 'ok'",
   );
 
   return {
@@ -77,6 +82,7 @@ export function makeLlmCallStore(db: Db): LlmCallStore {
         r.status,
         r.costUsd ?? null,
         r.errorMessage ?? null,
+        r.weight ?? 1,
       );
     },
 
