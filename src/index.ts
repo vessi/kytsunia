@@ -6,7 +6,7 @@ import { loadInsults } from "./shell/insults.js";
 import { makeLlmClient } from "./shell/llm/anthropic.js";
 import type { InvokeDigestDeps } from "./shell/llm/digest.js";
 import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
-import { DIGEST_PROMPT, PERSONA_PROMPT } from "./shell/llm/persona.js";
+import { DIGEST_PROMPT, PERSONA_PROMPT, SEARCH_PROMPT } from "./shell/llm/persona.js";
 import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
 import { openDb } from "./shell/storage/db.js";
@@ -17,6 +17,7 @@ import { makePhotoCacheStore } from "./shell/storage/photo-cache.js";
 import { makeRegularsStore } from "./shell/storage/regulars.js";
 import { makeDynamicRuleStore } from "./shell/storage/rules.js";
 import { executeActions, toMessageInput } from "./shell/telegram.js";
+import { startTyping } from "./shell/typing.js";
 
 const config = loadConfig();
 const log = createLogger(config);
@@ -90,6 +91,11 @@ const invokeLlmDeps: InvokeLlmDeps = {
   appendMessage,
   botUserId,
   botName,
+  startTyping,
+  searchEnabled: config.KYTSUNIA_SEARCH_ENABLED,
+  searchMaxUses: config.KYTSUNIA_SEARCH_MAX_USES,
+  searchWeight: config.KYTSUNIA_SEARCH_WEIGHT,
+  searchPrompt: SEARCH_PROMPT,
 };
 
 const invokeDigestDeps: InvokeDigestDeps = {
@@ -105,6 +111,7 @@ const invokeDigestDeps: InvokeDigestDeps = {
   defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
   globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
   log,
+  startTyping,
 };
 
 log.info(
@@ -114,6 +121,15 @@ log.info(
     defaultCount: config.KYTSUNIA_DIGEST_DEFAULT_COUNT,
   },
   "digest configured",
+);
+
+log.info(
+  {
+    enabled: config.KYTSUNIA_SEARCH_ENABLED,
+    maxUses: config.KYTSUNIA_SEARCH_MAX_USES,
+    weight: config.KYTSUNIA_SEARCH_WEIGHT,
+  },
+  "web search configured",
 );
 
 bot.on("message", async (ctx) => {

@@ -5,6 +5,9 @@ type Pricing = {
   cacheWrite: number;
 };
 
+// Пошук тарифікується окремо від токенів: $10 за 1000 запитів, для всіх моделей.
+const WEB_SEARCH_USD = 0.01;
+
 const PRICING: Record<string, Pricing> = {
   "claude-haiku-4-5-20251001": {
     input: 1.0,
@@ -32,6 +35,7 @@ export type Usage = {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  webSearchRequests?: number;
 };
 
 export function calculateCost(model: string, usage: Usage): number | null {
@@ -42,6 +46,7 @@ export function calculateCost(model: string, usage: Usage): number | null {
   const outputUsd = (usage.outputTokens * price.output) / 1_000_000;
   const cacheReadUsd = (usage.cacheReadTokens * price.cacheRead) / 1_000_000;
   const cacheWriteUsd = (usage.cacheWriteTokens * price.cacheWrite) / 1_000_000;
+  const webSearchUsd = (usage.webSearchRequests ?? 0) * WEB_SEARCH_USD;
 
-  return inputUsd + outputUsd + cacheReadUsd + cacheWriteUsd;
+  return inputUsd + outputUsd + cacheReadUsd + cacheWriteUsd + webSearchUsd;
 }

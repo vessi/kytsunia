@@ -4,10 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   LlmClient,
   LlmReply,
+  ReplyOptions,
   SystemContent,
   UserContent,
 } from "../../../src/shell/llm/anthropic.js";
-import { type InvokeLlmDeps, invokeLlmReply } from "../../../src/shell/llm/invoke.js";
+import { type InvokeLlmDeps, invokeLlmReply, withSources } from "../../../src/shell/llm/invoke.js";
 import type { PhotoFetcher } from "../../../src/shell/llm/telegram-photos.js";
 import { makeMessageAppender } from "../../../src/shell/storage/messages.js";
 import { openTestDb } from "../../helpers/db.js";
@@ -110,6 +111,11 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     appendMessage: vi.fn(),
     botUserId: 9999,
     botName: "Кицюня",
+    startTyping: vi.fn(() => vi.fn()),
+    searchEnabled: true,
+    searchMaxUses: 3,
+    searchWeight: 3,
+    searchPrompt: "SEARCH",
     ...overrides,
   };
 }
@@ -781,5 +787,293 @@ describe("invokeLlmReply: vision", () => {
 
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher).toHaveBeenCalledWith("newone", "newone_u");
+  });
+});
+
+describe("invokeLlmReply: web search", () => {
+  const opened: InvokeLlmDeps[] = [];
+
+  afterEach(() => {
+    for (const d of opened.splice(0)) d.db.close();
+  });
+
+  function searchDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
+    const deps = makeBaseDeps({ model: "claude-sonnet-5", persona: "PERSONA", ...overrides });
+    opened.push(deps);
+    return deps;
+  }
+
+  function makeSearchLlm(overrides: Partial<LlmReply> = {}) {
+    const calls: Array<{
+      system: SystemContent;
+      content: UserContent;
+      maxTokens: number | undefined;
+      options: ReplyOptions | undefined;
+    }> = [];
+    const client: LlmClient = {
+      reply: async (system, content, _model, maxTokens, options) => {
+        calls.push({ system, content, maxTokens, options });
+        return {
+          text: "Курс 44,55.",
+          inputTokens: 10,
+          outputTokens: 5,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          webSearchRequests: 1,
+          sources: [],
+          ...overrides,
+        };
+      },
+    };
+    return { client, calls };
+  }
+
+  const SEARCH = { search: { query: "курс долара" } };
+
+  it("attaches the web search tool with max_uses and a bigger token budget", async () => {
+    const llm = makeSearchLlm();
+    const { ctx } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client, searchMaxUses: 2 }), SEARCH);
+
+    expect(llm.calls[0]?.options?.tools?.[0]).toMatchObject({
+      type: "web_search_20250305",
+      max_uses: 2,
+    });
+    expect(llm.calls[0]?.maxTokens).toBeGreaterThan(500);
+  });
+
+  it("does not attach tools to a normal reply", async () => {
+    const llm = makeSearchLlm();
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client }));
+
+    expect(llm.calls[0]?.options).toBeUndefined();
+  });
+
+  it("appends the search prompt to the persona", async () => {
+    const llm = makeSearchLlm();
+    const { ctx } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    const deps = searchDeps({ llmClient: llm.client, searchPrompt: "SEARCH RULES" });
+    await invokeLlmReply(ctx, 999, deps, SEARCH);
+
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system[0]?.text).toBe("PERSONA\n\nSEARCH RULES");
+  });
+
+  it("puts the query into the message the model sees", async () => {
+    const llm = makeSearchLlm();
+    // Reply-кейс: сам тригер без запиту, запит узято з повідомлення, на яке відповіли.
+    const { ctx } = makeCtx({ text: "Кицюня, пошукай" });
+    await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client }), SEARCH);
+
+    expect(llm.calls[0]?.content).toBe("Andriy: Кицюня, пошукай: курс долара");
+  });
+
+  it("keeps the trigger text when the query is empty", async () => {
+    const llm = makeSearchLlm();
+    const { ctx } = makeCtx({ text: "Кицюня, пошукай" });
+    await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client }), {
+      search: { query: "" },
+    });
+
+    expect(llm.calls[0]?.content).toBe("Andriy: Кицюня, пошукай");
+  });
+
+  it("answers without calling the model when search is disabled", async () => {
+    const llm = makeSearchLlm();
+    const { ctx, reply } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    const deps = searchDeps({ llmClient: llm.client, searchEnabled: false });
+    await invokeLlmReply(ctx, 999, deps, SEARCH);
+
+    expect(llm.calls).toHaveLength(0);
+    expect(deps.llmCallStore.record).not.toHaveBeenCalled();
+    expect(reply.mock.calls[0]?.[0]).toContain("вимкнений");
+  });
+
+  it("refuses a search when the user has fewer slots left than its weight", async () => {
+    const llm = makeSearchLlm();
+    const { ctx, reply } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    const deps = searchDeps({
+      llmClient: llm.client,
+      searchWeight: 3,
+      llmCallStore: {
+        record: vi.fn(),
+        checkUserRate: vi.fn().mockReturnValue({ used: 13, limit: 15, allowed: true }),
+        checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 1000, allowed: true }),
+      },
+    });
+    await invokeLlmReply(ctx, 999, deps, SEARCH);
+
+    expect(llm.calls).toHaveLength(0);
+    expect(deps.llmCallStore.record).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "rate_limited", errorMessage: "user_limit", weight: 3 }),
+    );
+    expect(reply.mock.calls[0]?.[0]).toContain("Пошук коштує 3");
+  });
+
+  it("still lets a normal reply through with the same headroom", async () => {
+    const llm = makeSearchLlm();
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    const deps = searchDeps({
+      llmClient: llm.client,
+      llmCallStore: {
+        record: vi.fn(),
+        checkUserRate: vi.fn().mockReturnValue({ used: 13, limit: 15, allowed: true }),
+        checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 1000, allowed: true }),
+      },
+    });
+    await invokeLlmReply(ctx, 999, deps);
+
+    expect(llm.calls).toHaveLength(1);
+    expect(deps.llmCallStore.record).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "ok", weight: 1 }),
+    );
+  });
+
+  it("refuses a search when the global cap has less headroom than its weight", async () => {
+    const llm = makeSearchLlm();
+    const { ctx } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    const deps = searchDeps({
+      llmClient: llm.client,
+      searchWeight: 3,
+      llmCallStore: {
+        record: vi.fn(),
+        checkUserRate: vi.fn().mockReturnValue({ used: 0, limit: 15, allowed: true }),
+        checkGlobalRate: vi.fn().mockReturnValue({ used: 998, cap: 1000, allowed: true }),
+      },
+    });
+    await invokeLlmReply(ctx, 999, deps, SEARCH);
+
+    expect(llm.calls).toHaveLength(0);
+    expect(deps.llmCallStore.record).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "rate_limited", errorMessage: "global_cap" }),
+    );
+  });
+
+  it("records the search weight and includes the per-search fee in the cost", async () => {
+    const llm = makeSearchLlm({ inputTokens: 0, outputTokens: 0, webSearchRequests: 2 });
+    const { ctx } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    const deps = searchDeps({ llmClient: llm.client, searchWeight: 3 });
+    await invokeLlmReply(ctx, 999, deps, SEARCH);
+
+    expect(deps.llmCallStore.record).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "ok", weight: 3, costUsd: expect.closeTo(0.02, 5) }),
+    );
+  });
+
+  it("appends at most two sources and disables link previews", async () => {
+    const llm = makeSearchLlm({
+      sources: [
+        { url: "https://bank.gov.ua/rate", title: "НБУ" },
+        { url: "https://minfin.com.ua/currency", title: "Мінфін" },
+        { url: "https://third.example/rate", title: null },
+      ],
+    });
+    const { ctx, reply } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client }), SEARCH);
+
+    const [sentText, sentOptions] = reply.mock.calls[0] ?? [];
+    expect(sentText).toBe(
+      "Курс 44,55.\n\nДжерела:\nhttps://bank.gov.ua/rate\nhttps://minfin.com.ua/currency",
+    );
+    expect(sentOptions).toMatchObject({ link_preview_options: { is_disabled: true } });
+  });
+
+  it("stores the reply in history without the sources", async () => {
+    const llm = makeSearchLlm({ sources: [{ url: "https://bank.gov.ua/rate", title: "НБУ" }] });
+    const { ctx } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    const deps = searchDeps({ llmClient: llm.client });
+    await invokeLlmReply(ctx, 999, deps, SEARCH);
+
+    expect(deps.appendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Курс 44,55." }),
+    );
+  });
+
+  it("falls back to a short answer when the search ends without text", async () => {
+    const llm = makeSearchLlm({ text: "", stopReason: "pause_turn" });
+    const { ctx, reply } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client }), SEARCH);
+
+    expect(reply.mock.calls[0]?.[0]).toBe("Нічого путнього не знайшла.");
+  });
+
+  it("never sends an empty normal reply either", async () => {
+    const llm = makeSearchLlm({ text: "  " });
+    const { ctx, reply } = makeCtx({ text: "Кицюня, привіт" });
+    await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client }));
+
+    expect(String(reply.mock.calls[0]?.[0]).trim()).not.toBe("");
+  });
+});
+
+describe("invokeLlmReply: typing indicator", () => {
+  const opened: InvokeLlmDeps[] = [];
+
+  afterEach(() => {
+    for (const d of opened.splice(0)) d.db.close();
+  });
+
+  function deps(overrides: Partial<InvokeLlmDeps>): InvokeLlmDeps {
+    const d = makeBaseDeps(overrides);
+    opened.push(d);
+    return d;
+  }
+
+  it("shows typing while the model works and clears it after replying", async () => {
+    const stop = vi.fn();
+    const startTyping = vi.fn(() => stop);
+    const { ctx, reply } = makeCtx({ text: "Кицюня, привіт" });
+    await invokeLlmReply(ctx, 999, deps({ startTyping }));
+
+    expect(startTyping).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stop.mock.invocationCallOrder[0]).toBeGreaterThan(
+      reply.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("clears typing when the model call fails", async () => {
+    const stop = vi.fn();
+    const failing: LlmClient = {
+      reply: async () => {
+        throw new Error("boom");
+      },
+    };
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    await invokeLlmReply(ctx, 999, deps({ llmClient: failing, startTyping: () => stop }));
+
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not show typing for a rate-limited request", async () => {
+    const startTyping = vi.fn(() => vi.fn());
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    await invokeLlmReply(
+      ctx,
+      999,
+      deps({
+        startTyping,
+        llmCallStore: {
+          record: vi.fn(),
+          checkUserRate: vi.fn().mockReturnValue({ used: 100, limit: 100, allowed: false }),
+          checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 1000, allowed: true }),
+        },
+      }),
+    );
+
+    expect(startTyping).not.toHaveBeenCalled();
+  });
+});
+
+describe("withSources", () => {
+  it("returns the text unchanged when there are no sources", () => {
+    expect(withSources("Курс 44,55.", [])).toBe("Курс 44,55.");
+  });
+
+  it("uses the singular label for a single source", () => {
+    expect(withSources("Курс 44,55.", [{ url: "https://bank.gov.ua/rate", title: "НБУ" }])).toBe(
+      "Курс 44,55.\n\nДжерело:\nhttps://bank.gov.ua/rate",
+    );
   });
 });

@@ -477,3 +477,69 @@ describe("fixedRules: digest", () => {
     expect(rule.pattern.test("Кицюня, дай джем")).toBe(false);
   });
 });
+
+describe("fixedRules: web_search", () => {
+  const rule = findRule("web_search");
+
+  function produce(text: string, overrides: Partial<MessageInput> = {}) {
+    const m = rule.pattern.exec(text);
+    if (!m) throw new Error(`no match: ${text}`);
+    return rule.produce(buildInput({ text, ...overrides }), m, buildState());
+  }
+
+  function replyTo(text?: string) {
+    return {
+      messageId: 50,
+      authorId: 1,
+      authorName: "Olha",
+      ...(text !== undefined ? { text } : {}),
+    };
+  }
+
+  it("takes the query typed after «пошукай»", () => {
+    expect(produce("Кицюня, пошукай курс долара")).toEqual([
+      { kind: "invoke_web_search", replyTo: 100, query: "курс долара" },
+    ]);
+  });
+
+  it("accepts a colon and a lowercase vocative address", () => {
+    expect(produce("кицюню, пошукай: курс долара")).toEqual([
+      { kind: "invoke_web_search", replyTo: 100, query: "курс долара" },
+    ]);
+  });
+
+  it("keeps a multiline query whole", () => {
+    expect(produce("Кицюня, пошукай\nрецепт борщу\nбез буряка")[0]).toMatchObject({
+      query: "рецепт борщу\nбез буряка",
+    });
+  });
+
+  it("searches for the replied message when nothing is typed", () => {
+    expect(produce("Кицюня, пошукай", { replyTo: replyTo("хто зараз міністр оборони?") })).toEqual([
+      { kind: "invoke_web_search", replyTo: 100, query: "хто зараз міністр оборони?" },
+    ]);
+  });
+
+  it("prefers the typed query over the replied message", () => {
+    expect(
+      produce("Кицюня, пошукай курс євро", { replyTo: replyTo("курс долара") })[0],
+    ).toMatchObject({ query: "курс євро" });
+  });
+
+  it("leaves the query empty for a reply to a photo", () => {
+    const photo = { ...replyTo(), photoFileId: "f", photoUniqueId: "u" };
+    expect(produce("Кицюня, пошукай", { replyTo: photo })).toEqual([
+      { kind: "invoke_web_search", replyTo: 100, query: "" },
+    ]);
+  });
+
+  it("asks what to search when there is neither a query nor a reply", () => {
+    expect(produce("Кицюня, пошукай")).toEqual([
+      { kind: "reply_text", text: "Що шукати?", replyTo: 100 },
+    ]);
+  });
+
+  it("does not match other forms of the verb", () => {
+    expect(rule.pattern.test("Кицюня, пошукайте курс")).toBe(false);
+  });
+});

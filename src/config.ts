@@ -55,6 +55,17 @@ const envSchema = z.object({
   KYTSUNIA_DIGEST_MODEL: envValue(z.string().default("claude-sonnet-5")),
   // Скільки слотів добового ліміту зʼїдає один дайджест.
   KYTSUNIA_DIGEST_WEIGHT: envValue(z.coerce.number().int().positive().default(3)),
+  // Пошук в інтернеті на явну команду «Кицюня, пошукай».
+  KYTSUNIA_SEARCH_ENABLED: envValue(
+    z
+      .string()
+      .default("true")
+      .transform((v) => v === "true" || v === "1"),
+  ),
+  // Скільки пошуків модель може зробити за одну відповідь. Кожен — $0.01.
+  KYTSUNIA_SEARCH_MAX_USES: envValue(z.coerce.number().int().positive().default(3)),
+  // Скільки слотів добового ліміту зʼїдає відповідь з пошуком.
+  KYTSUNIA_SEARCH_WEIGHT: envValue(z.coerce.number().int().positive().default(3)),
 });
 
 export type Config = z.infer<typeof envSchema>;

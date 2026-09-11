@@ -194,6 +194,7 @@ describe("invokeDigest", () => {
       defaultDailyLimit: 15,
       globalDailyCap: 150,
       log: silentLog,
+      startTyping: vi.fn(() => vi.fn()),
       ...overrides,
     };
   }
@@ -354,6 +355,51 @@ describe("invokeDigest", () => {
     await invokeDigest(ctx, 999, undefined, makeDeps({ llmClient: makeFakeLlm("   ").client }));
 
     expect(String(reply.mock.calls[0]?.[0]).trim().length).toBeGreaterThan(0);
+  });
+
+  it("shows typing while the digest is written and clears it afterwards", async () => {
+    const { ctx, reply } = makeCtx();
+    const stop = vi.fn();
+    const startTyping = vi.fn(() => stop);
+    seed(10);
+
+    await invokeDigest(ctx, 999, undefined, makeDeps({ startTyping }));
+
+    expect(startTyping).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stop.mock.invocationCallOrder[0]).toBeGreaterThan(
+      reply.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("does not show typing when there is nothing to digest", async () => {
+    const { ctx } = makeCtx();
+    const startTyping = vi.fn(() => vi.fn());
+    seed(3);
+
+    await invokeDigest(ctx, 999, undefined, makeDeps({ startTyping }));
+
+    expect(startTyping).not.toHaveBeenCalled();
+  });
+
+  it("clears typing when the model call fails", async () => {
+    const { ctx } = makeCtx();
+    const stop = vi.fn();
+    const failing: LlmClient = {
+      reply: async () => {
+        throw new Error("boom");
+      },
+    };
+    seed(10);
+
+    await invokeDigest(
+      ctx,
+      999,
+      undefined,
+      makeDeps({ llmClient: failing, startTyping: () => stop }),
+    );
+
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it("reports an API failure without throwing", async () => {

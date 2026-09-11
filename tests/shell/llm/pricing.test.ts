@@ -32,4 +32,15 @@ describe("calculateCost", () => {
     });
     expect(cost).toBeCloseTo(0.1 + 1.25, 5);
   });
+
+  it("adds $0.01 per web search on top of tokens", () => {
+    const cost = calculateCost("claude-sonnet-5", {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      webSearchRequests: 3,
+    });
+    expect(cost).toBeCloseTo(0.03, 5);
+  });
 });

@@ -187,6 +187,12 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       await invokeLlmReply(ctx, action.replyTo, deps.invokeLlmDeps);
       return;
 
+    case "invoke_web_search":
+      await invokeLlmReply(ctx, action.replyTo, deps.invokeLlmDeps, {
+        search: { query: action.query },
+      });
+      return;
+
     case "invoke_digest":
       await invokeDigest(ctx, action.replyTo, action.count, deps.invokeDigestDeps);
       return;

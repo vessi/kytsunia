@@ -202,6 +202,21 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, пошукай курс долара». Без тексту — шукаємо за повідомленням чи
+    // фото, на яке відповіли. Роздільник після «пошукай» обовʼязковий, щоб не
+    // ловити «пошукайте».
+    name: "web_search",
+    pattern: /(К|к)ицюн(я|ю), пошукай(?:[\s,:!?.]+([\s\S]*))?$/,
+    produce: (input, match) => {
+      const typed = match[3]?.trim() ?? "";
+      const query = typed || input.replyTo?.text?.trim() || "";
+      if (!query && !input.replyTo) {
+        return [{ kind: "reply_text", text: "Що шукати?", replyTo: input.messageId }];
+      }
+      return [{ kind: "invoke_web_search", replyTo: input.messageId, query }];
+    },
+  },
+  {
     name: "rate_status",
     pattern: /(К|к)ицюн(я|ю), скільки в мене лишилось\??/,
     produce: (input) => [

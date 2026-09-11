@@ -4,6 +4,7 @@ import type { Db } from "../storage/db.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
 import { getRecentMessages, type RecentMessageRow } from "../storage/messages.js";
 import { formatKyivDate, formatKyivTime } from "../time.js";
+import type { TypingStarter } from "../typing.js";
 import type { LlmClient, SystemBlock } from "./anthropic.js";
 import { calculateCost } from "./pricing.js";
 
@@ -31,6 +32,8 @@ export type InvokeDigestDeps = {
   defaultDailyLimit: number;
   globalDailyCap: number;
   log: Logger;
+  // Поновлює «друкує…», поки модель пише дайджест.
+  startTyping: TypingStarter;
 };
 
 /**
@@ -160,6 +163,7 @@ export async function invokeDigest(
   }
 
   const { system, userMessage } = buildDigestRequest(rows, deps.prompt);
+  const stopTyping = deps.startTyping(ctx);
 
   try {
     const reply = await deps.llmClient.reply(system, userMessage, deps.model, DIGEST_MAX_TOKENS);
@@ -206,5 +210,7 @@ export async function invokeDigest(
     deps.llmCallStore.record({ ...baseRecord, status: "error", errorMessage });
     deps.log.error({ err: errorMessage, chatId, userId }, "digest failed");
     await ctx.reply("Щось не вийшло, спробуй пізніше.", { reply_to_message_id: replyTo });
+  } finally {
+    stopTyping();
   }
 }

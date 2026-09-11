@@ -8,7 +8,8 @@ import {
   type RecentMessageRow,
 } from "../storage/messages.js";
 import type { RegularsStore } from "../storage/regulars.js";
-import type { LlmClient } from "./anthropic.js";
+import type { TypingStarter } from "../typing.js";
+import { type LlmClient, type ReplySource, webSearchTool } from "./anthropic.js";
 import { buildLlmRequest, type RecentMessage } from "./context.js";
 import { calculateCost } from "./pricing.js";
 import { collectProfiles } from "./profiles.js";
@@ -42,6 +43,18 @@ export type InvokeLlmDeps = {
   appendMessage: MessageAppender;
   botUserId: number;
   botName: string;
+  // Поновлює «друкує…», поки йде виклик.
+  startTyping: TypingStarter;
+  // Явний пошук «Кицюня, пошукай».
+  searchEnabled: boolean;
+  searchMaxUses: number;
+  searchWeight: number;
+  searchPrompt: string;
+};
+
+export type InvokeLlmOptions = {
+  // query порожній, коли шукати треба за повідомленням чи фото, на яке відповіли.
+  search?: { query: string };
 };
 
 const RATE_LIMIT_REPLIES = [
@@ -49,6 +62,22 @@ const RATE_LIMIT_REPLIES = [
   "Усе, на сьогодні досить.",
   "Іди читай книжку, я в режимі економії.",
 ];
+
+// З пошуком у бюджет відповіді входять ще й запити до пошуку — 500 може не вистачити.
+const SEARCH_MAX_TOKENS = 1024;
+
+// Більше двох посилань у чаті — вже простирадло.
+const MAX_SOURCES = 2;
+
+/**
+ * Джерела пошуку дописуємо самі, з citations відповіді, а не просимо модель
+ * вставляти посилання в текст: так URL не вигадаються.
+ */
+export function withSources(text: string, sources: readonly ReplySource[]): string {
+  if (sources.length === 0) return text;
+  const label = sources.length === 1 ? "Джерело:" : "Джерела:";
+  return `${text}\n\n${label}\n${sources.map((s) => s.url).join("\n")}`;
+}
 
 interface PhotoRefRow {
   msg_id: number;
@@ -220,11 +249,24 @@ export async function invokeLlmReply(
   ctx: Context,
   replyTo: number,
   deps: InvokeLlmDeps,
+  options: InvokeLlmOptions = {},
 ): Promise<void> {
   const chatId = ctx.chat?.id ?? 0;
   const userId = ctx.from?.id ?? 0;
   const userName = ctx.from?.first_name ?? "";
-  const text = ctx.message?.text ?? ctx.message?.caption ?? "";
+  const search = options.search;
+  // При пошуку у відповідь на повідомлення сам тригер — просто «Кицюня, пошукай»,
+  // а що шукати, лежить у query. Тому текст для моделі складаємо явно.
+  const text = search?.query
+    ? `Кицюня, пошукай: ${search.query}`
+    : (ctx.message?.text ?? ctx.message?.caption ?? "");
+  // Відповідь з пошуком дорожча за звичайну, тож і в лімітах важить більше.
+  const weight = search ? deps.searchWeight : 1;
+
+  if (search && !deps.searchEnabled) {
+    await ctx.reply("Пошук зараз вимкнений.", { reply_to_message_id: replyTo });
+    return;
+  }
 
   const baseRecord = {
     ts: Date.now(),
@@ -233,11 +275,12 @@ export async function invokeLlmReply(
     userName,
     triggerMsgId: replyTo,
     model: deps.model,
+    weight,
   };
 
-  // 1. Global cap
+  // 1. Global cap. Перевіряємо запас на weight слотів, а не «чи лишився хоч один».
   const globalStatus = deps.llmCallStore.checkGlobalRate(deps.globalDailyCap);
-  if (!globalStatus.allowed) {
+  if (!globalStatus.allowed || globalStatus.cap - globalStatus.used < weight) {
     deps.llmCallStore.record({ ...baseRecord, status: "rate_limited", errorMessage: "global_cap" });
     deps.log.warn({ chatId, userId, used: globalStatus.used }, "global llm cap reached");
     await ctx.reply("На сьогодні досить, до завтра.", { reply_to_message_id: replyTo });
@@ -246,155 +289,195 @@ export async function invokeLlmReply(
 
   // 2. User rate
   const userStatus = deps.llmCallStore.checkUserRate(userId, deps.defaultDailyLimit);
-  if (!userStatus.allowed) {
+  const userShort = userStatus.limit !== null && userStatus.limit - userStatus.used < weight;
+  if (!userStatus.allowed || userShort) {
     deps.llmCallStore.record({ ...baseRecord, status: "rate_limited", errorMessage: "user_limit" });
+    // Слоти ще є, але на пошук не вистачає — кажемо прямо: «замучив» після
+    // пари повідомлень звучало б дивно.
+    if (userStatus.allowed) {
+      await ctx.reply(`Пошук коштує ${weight} звичайних відповідей, а в тебе стільки нема.`, {
+        reply_to_message_id: replyTo,
+      });
+      return;
+    }
     const idx = Math.floor(deps.rng() * RATE_LIMIT_REPLIES.length);
     const message = RATE_LIMIT_REPLIES[idx] ?? "На сьогодні все.";
     await ctx.reply(message, { reply_to_message_id: replyTo });
     return;
   }
 
-  // 3. Vision: debounce, якщо є альбом, щоб сіблінги встигли в DB.
-  const triggerMediaGroupId = ctx.message?.media_group_id;
-  const replyMediaGroupId = ctx.message?.reply_to_message?.media_group_id;
-  const hasAlbum = Boolean(triggerMediaGroupId || replyMediaGroupId);
-  if (deps.visionEnabled && hasAlbum) {
-    deps.log.debug(
-      { triggerMediaGroupId, replyMediaGroupId, ms: deps.albumDebounceMs },
-      "album debounce",
-    );
-    await deps.sleep(deps.albumDebounceMs);
-  }
-
-  // 4. Зібрати recent context (логічні повідомлення з альбомами вже згрупованими).
-  const recentRows = getRecentMessages(deps.db, chatId, deps.recentContextSize, replyTo);
-  const profiles = collectProfiles(
-    deps.regularsStore,
-    userId,
-    chatId,
-    recentRows,
-    deps.profilesLimit,
-  );
-
-  // 5. Зібрати фото — ТІЛЬКИ ті, на які явно посилаємось:
-  //    - trigger (поточне фото або альбом)
-  //    - reply chain (reply_to_message → ... → знайдене фото)
-  //    - TTL fallback: останнє фото в чаті за N секунд, якщо нічого вище не знайшли
-  //    Історичні фото поза цими каналами НЕ підтягуються (recency-photo-bias).
-  const triggerRaw = deps.visionEnabled ? collectTriggerPhotos(ctx, deps.db) : [];
-  const replyRaw = deps.visionEnabled
-    ? collectReplyTargetPhotos(ctx, deps.db, deps.threadDepth)
-    : [];
-
-  // Per-album cap до кожного джерела окремо.
-  const triggerPhotoRefs = triggerRaw.slice(0, deps.maxPhotosPerAlbum);
-  if (triggerRaw.length > triggerPhotoRefs.length) {
-    deps.log.debug(
-      { had: triggerRaw.length, capped: deps.maxPhotosPerAlbum },
-      "trigger album exceeds per-album cap",
-    );
-  }
-  const triggerUniqueIds = new Set(triggerPhotoRefs.map((p) => p.uniqueId));
-  const replyDeduped = replyRaw.filter((p) => !triggerUniqueIds.has(p.uniqueId));
-  const replyPhotoRefs = replyDeduped.slice(0, deps.maxPhotosPerAlbum);
-
-  // TTL fallback тільки коли нічого не знайдено в попередніх каналах.
-  let fallbackRefs: PhotoRef[] = [];
-  if (deps.visionEnabled && triggerPhotoRefs.length === 0 && replyPhotoRefs.length === 0) {
-    const raw = collectRecentPhotoFallback(deps.db, chatId, deps.ttlMs, deps.now());
-    fallbackRefs = raw.slice(0, deps.maxPhotosPerAlbum);
-    if (fallbackRefs.length > 0) {
-      deps.log.debug({ count: fallbackRefs.length, ttlMs: deps.ttlMs }, "vision: TTL fallback hit");
-    }
-  }
-
-  // Total cap: trigger > reply chain > TTL fallback.
-  const allRefs = [...triggerPhotoRefs, ...replyPhotoRefs, ...fallbackRefs].slice(
-    0,
-    deps.maxPhotosTotal,
-  );
-
-  // 6. Завантаження байтів (паралельно, толерантно).
-  const fetched = await fetchPhotosTolerant(allRefs, deps.photoFetcher, deps.log);
-
-  // 7. Всі фото йдуть як attachments поточного повідомлення. Для моделі це
-  //    «фото, які стосуються цього питання» — і trigger, і reply-target
-  //    логічно належать до того, на що користувач зараз дивиться.
-  //    Recent історія не несе фото-блоків, тільки текст.
-  const currentPhotos = fetched
-    .filter((p): p is FetchedPhoto => p !== null)
-    .map((f) => ({ mime: f.mime, base64: f.base64 }));
-
-  const recent: RecentMessage[] = recentRows.map((row) => ({
-    senderName: row.senderName,
-    text: row.text,
-    photos: [],
-  }));
-
-  const { system, userMessage } = buildLlmRequest(
-    { senderName: userName, text, photos: currentPhotos },
-    recent,
-    deps.persona,
-    profiles,
-  );
-
+  // «Друкує…» вмикаємо, коли вже ясно, що кличемо модель (ліміти пройдено).
+  const stopTyping = deps.startTyping(ctx);
   try {
-    const reply = await deps.llmClient.reply(system, userMessage, deps.model);
-    const cost = calculateCost(deps.model, {
-      inputTokens: reply.inputTokens,
-      outputTokens: reply.outputTokens,
-      cacheReadTokens: reply.cacheReadTokens,
-      cacheWriteTokens: reply.cacheWriteTokens,
-    });
+    // 3. Vision: debounce, якщо є альбом, щоб сіблінги встигли в DB.
+    const triggerMediaGroupId = ctx.message?.media_group_id;
+    const replyMediaGroupId = ctx.message?.reply_to_message?.media_group_id;
+    const hasAlbum = Boolean(triggerMediaGroupId || replyMediaGroupId);
+    if (deps.visionEnabled && hasAlbum) {
+      deps.log.debug(
+        { triggerMediaGroupId, replyMediaGroupId, ms: deps.albumDebounceMs },
+        "album debounce",
+      );
+      await deps.sleep(deps.albumDebounceMs);
+    }
 
-    deps.llmCallStore.record({
-      ...baseRecord,
-      status: "ok",
-      inputTokens: reply.inputTokens,
-      outputTokens: reply.outputTokens,
-      cacheReadTokens: reply.cacheReadTokens,
-      cacheWriteTokens: reply.cacheWriteTokens,
-      ...(cost !== null ? { costUsd: cost } : {}),
-    });
-
-    deps.log.debug(
-      {
-        chatId,
-        userId,
-        inputTokens: reply.inputTokens,
-        outputTokens: reply.outputTokens,
-        cost,
-        photosSent: currentPhotos.length,
-      },
-      "llm reply ok",
+    // 4. Зібрати recent context (логічні повідомлення з альбомами вже згрупованими).
+    const recentRows = getRecentMessages(deps.db, chatId, deps.recentContextSize, replyTo);
+    const profiles = collectProfiles(
+      deps.regularsStore,
+      userId,
+      chatId,
+      recentRows,
+      deps.profilesLimit,
     );
 
-    const sent = await ctx.reply(reply.text, { reply_to_message_id: replyTo });
-    // Зберігаємо власну відповідь — без цього reply-chain «user → bot → user»
-    // не зможе пройтися назад до фото.
-    try {
-      deps.appendMessage({
-        chatId,
-        messageId: sent.message_id,
-        ts: sent.date * 1000,
-        senderId: deps.botUserId,
-        senderName: deps.botName,
-        text: reply.text,
-        kind: "text",
-        replyTo: { messageId: replyTo, authorId: userId, authorName: userName },
-      });
-    } catch (persistErr) {
-      // Не валимо UX через помилку запису — просто логуємо.
-      deps.log.warn(
-        { err: persistErr instanceof Error ? persistErr.message : persistErr },
-        "failed to persist bot reply",
+    // 5. Зібрати фото — ТІЛЬКИ ті, на які явно посилаємось:
+    //    - trigger (поточне фото або альбом)
+    //    - reply chain (reply_to_message → ... → знайдене фото)
+    //    - TTL fallback: останнє фото в чаті за N секунд, якщо нічого вище не знайшли
+    //    Історичні фото поза цими каналами НЕ підтягуються (recency-photo-bias).
+    const triggerRaw = deps.visionEnabled ? collectTriggerPhotos(ctx, deps.db) : [];
+    const replyRaw = deps.visionEnabled
+      ? collectReplyTargetPhotos(ctx, deps.db, deps.threadDepth)
+      : [];
+
+    // Per-album cap до кожного джерела окремо.
+    const triggerPhotoRefs = triggerRaw.slice(0, deps.maxPhotosPerAlbum);
+    if (triggerRaw.length > triggerPhotoRefs.length) {
+      deps.log.debug(
+        { had: triggerRaw.length, capped: deps.maxPhotosPerAlbum },
+        "trigger album exceeds per-album cap",
       );
     }
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    deps.llmCallStore.record({ ...baseRecord, status: "error", errorMessage });
-    deps.log.error({ err: errorMessage, chatId, userId }, "llm reply failed");
-    await ctx.reply("Щось не вийшло, спробуй пізніше.", { reply_to_message_id: replyTo });
+    const triggerUniqueIds = new Set(triggerPhotoRefs.map((p) => p.uniqueId));
+    const replyDeduped = replyRaw.filter((p) => !triggerUniqueIds.has(p.uniqueId));
+    const replyPhotoRefs = replyDeduped.slice(0, deps.maxPhotosPerAlbum);
+
+    // TTL fallback тільки коли нічого не знайдено в попередніх каналах.
+    let fallbackRefs: PhotoRef[] = [];
+    if (deps.visionEnabled && triggerPhotoRefs.length === 0 && replyPhotoRefs.length === 0) {
+      const raw = collectRecentPhotoFallback(deps.db, chatId, deps.ttlMs, deps.now());
+      fallbackRefs = raw.slice(0, deps.maxPhotosPerAlbum);
+      if (fallbackRefs.length > 0) {
+        deps.log.debug(
+          { count: fallbackRefs.length, ttlMs: deps.ttlMs },
+          "vision: TTL fallback hit",
+        );
+      }
+    }
+
+    // Total cap: trigger > reply chain > TTL fallback.
+    const allRefs = [...triggerPhotoRefs, ...replyPhotoRefs, ...fallbackRefs].slice(
+      0,
+      deps.maxPhotosTotal,
+    );
+
+    // 6. Завантаження байтів (паралельно, толерантно).
+    const fetched = await fetchPhotosTolerant(allRefs, deps.photoFetcher, deps.log);
+
+    // 7. Всі фото йдуть як attachments поточного повідомлення. Для моделі це
+    //    «фото, які стосуються цього питання» — і trigger, і reply-target
+    //    логічно належать до того, на що користувач зараз дивиться.
+    //    Recent історія не несе фото-блоків, тільки текст.
+    const currentPhotos = fetched
+      .filter((p): p is FetchedPhoto => p !== null)
+      .map((f) => ({ mime: f.mime, base64: f.base64 }));
+
+    const recent: RecentMessage[] = recentRows.map((row) => ({
+      senderName: row.senderName,
+      text: row.text,
+      photos: [],
+    }));
+
+    // Інструкції пошуку дописуємо в кінець персони, а не окремим блоком: так вони
+    // потрапляють у той самий кешований префікс.
+    const persona = search ? `${deps.persona}\n\n${deps.searchPrompt}` : deps.persona;
+    const { system, userMessage } = buildLlmRequest(
+      { senderName: userName, text, photos: currentPhotos },
+      recent,
+      persona,
+      profiles,
+    );
+
+    try {
+      const reply = search
+        ? await deps.llmClient.reply(system, userMessage, deps.model, SEARCH_MAX_TOKENS, {
+            tools: [webSearchTool(deps.searchMaxUses)],
+          })
+        : await deps.llmClient.reply(system, userMessage, deps.model);
+      const cost = calculateCost(deps.model, {
+        inputTokens: reply.inputTokens,
+        outputTokens: reply.outputTokens,
+        cacheReadTokens: reply.cacheReadTokens,
+        cacheWriteTokens: reply.cacheWriteTokens,
+        webSearchRequests: reply.webSearchRequests ?? 0,
+      });
+
+      deps.llmCallStore.record({
+        ...baseRecord,
+        status: "ok",
+        inputTokens: reply.inputTokens,
+        outputTokens: reply.outputTokens,
+        cacheReadTokens: reply.cacheReadTokens,
+        cacheWriteTokens: reply.cacheWriteTokens,
+        ...(cost !== null ? { costUsd: cost } : {}),
+      });
+
+      deps.log.debug(
+        {
+          chatId,
+          userId,
+          inputTokens: reply.inputTokens,
+          outputTokens: reply.outputTokens,
+          cost,
+          photosSent: currentPhotos.length,
+          searches: reply.webSearchRequests ?? 0,
+        },
+        "llm reply ok",
+      );
+
+      if (reply.stopReason === "pause_turn" || reply.stopReason === "max_tokens") {
+        deps.log.warn({ chatId, userId, stopReason: reply.stopReason }, "llm reply cut short");
+      }
+
+      // Порожній текст буває, коли модель вичерпала бюджет або сервер зупинив цикл
+      // пошуку (pause_turn) до фінальної відповіді. На порожньому Telegram впаде.
+      const replyText =
+        reply.text.trim() ||
+        (search ? "Нічого путнього не знайшла." : "Загубила думку, спитай ще раз.");
+      const sources = search ? (reply.sources ?? []).slice(0, MAX_SOURCES) : [];
+      const sent = await ctx.reply(withSources(replyText, sources), {
+        reply_to_message_id: replyTo,
+        ...(sources.length > 0 ? { link_preview_options: { is_disabled: true } } : {}),
+      });
+      // Зберігаємо власну відповідь — без цього reply-chain «user → bot → user»
+      // не зможе пройтися назад до фото.
+      try {
+        deps.appendMessage({
+          chatId,
+          messageId: sent.message_id,
+          ts: sent.date * 1000,
+          senderId: deps.botUserId,
+          senderName: deps.botName,
+          text: replyText,
+          kind: "text",
+          replyTo: { messageId: replyTo, authorId: userId, authorName: userName },
+        });
+      } catch (persistErr) {
+        // Не валимо UX через помилку запису — просто логуємо.
+        deps.log.warn(
+          { err: persistErr instanceof Error ? persistErr.message : persistErr },
+          "failed to persist bot reply",
+        );
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      deps.llmCallStore.record({ ...baseRecord, status: "error", errorMessage });
+      deps.log.error({ err: errorMessage, chatId, userId }, "llm reply failed");
+      await ctx.reply("Щось не вийшло, спробуй пізніше.", { reply_to_message_id: replyTo });
+    }
+  } finally {
+    stopTyping();
   }
 }
 

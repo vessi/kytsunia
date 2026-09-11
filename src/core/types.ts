@@ -51,7 +51,9 @@ export type Action =
   | { kind: "invoke_llm_reply"; replyTo: number }
   // count відсутній — беремо дефолт із конфіга. Клампимо до максимуму вже в
   // shell, щоб core лишався без знання про env.
-  | { kind: "invoke_digest"; replyTo: number; count?: number };
+  | { kind: "invoke_digest"; replyTo: number; count?: number }
+  // Явний пошук. query порожній, коли шукати треба за повідомленням чи фото, на яке відповіли.
+  | { kind: "invoke_web_search"; replyTo: number; query: string };
 
 export type DynamicRuleSpec = {
   pattern: string;
