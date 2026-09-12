@@ -1,5 +1,6 @@
 import type { ImageContent, SystemBlock, UserContent } from "./anthropic.js";
 import type { ProfileEntry } from "./profiles.js";
+import type { ThreadMessage } from "./thread.js";
 
 export type RecentMessage = {
   senderName: string;
@@ -52,6 +53,7 @@ export function buildLlmRequest(
   recent: readonly RecentMessage[],
   persona: string,
   profiles: readonly ProfileEntry[] = [],
+  thread: readonly ThreadMessage[] = [],
 ): LlmRequest {
   // Маркери [фото N] нумеруються глобально, синхронно з порядком image-blocks
   // нижче (історія в хронологічному порядку, потім поточні фото).
@@ -78,6 +80,15 @@ export function buildLlmRequest(
   }
   if (recentLines.length > 0) {
     tailSections.push(`Контекст останніх повідомлень у чаті:\n${recentLines.join("\n")}`);
+  }
+  // Гілка йде останньою — найближче до самого питання. Повідомлення з неї
+  // можуть дублювати recent: це нормально, цінність саме в позначці «на що
+  // відповідають».
+  if (thread.length > 0) {
+    const threadLines = thread.map((m) => `${m.senderName}: ${m.text}`);
+    tailSections.push(
+      `Гілка, на яку відповідає користувач, від старішого до новішого. Останній рядок — саме те повідомлення, на яке він відповідає:\n${threadLines.join("\n")}`,
+    );
   }
 
   const system: SystemBlock[] = [

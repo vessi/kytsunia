@@ -14,6 +14,7 @@ import { buildLlmRequest, type RecentMessage } from "./context.js";
 import { calculateCost } from "./pricing.js";
 import { collectProfiles } from "./profiles.js";
 import type { FetchedPhoto, PhotoFetcher } from "./telegram-photos.js";
+import { collectThread, replyTargetFromMessage } from "./thread.js";
 
 export type InvokeLlmDeps = {
   llmClient: LlmClient;
@@ -330,6 +331,12 @@ export async function invokeLlmReply(
       recentRows,
       deps.profilesLimit,
     );
+    // Гілка, на яку відповідають: без неї «а чому саме так?» у reply на давню
+    // репліку приходить до моделі без самої репліки.
+    const replyMessage = ctx.message?.reply_to_message;
+    const thread = replyMessage
+      ? collectThread(deps.db, chatId, replyTargetFromMessage(replyMessage), deps.threadDepth)
+      : [];
 
     // 5. Зібрати фото — ТІЛЬКИ ті, на які явно посилаємось:
     //    - trigger (поточне фото або альбом)
@@ -397,6 +404,7 @@ export async function invokeLlmReply(
       recent,
       persona,
       profiles,
+      thread,
     );
 
     try {

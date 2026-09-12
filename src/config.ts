@@ -33,7 +33,8 @@ const envSchema = z.object({
   // Затримка перед збором сіблінгів альбому. Telegram шле фото окремими update-ами,
   // потрібен час, щоб всі дійшли в DB.
   KYTSUNIA_VISION_ALBUM_DEBOUNCE_MS: envValue(z.coerce.number().int().nonnegative().default(1500)),
-  // Глибина traversal по reply-ланцюгу для пошуку фото в треді.
+  // Глибина traversal по reply-ланцюгу: і для пошуку фото в треді, і для
+  // текстової гілки, яка їде в контекст моделі.
   // Кицюня зберігає свої відповіді — тож chain типу
   //   user(текст) → bot → user(текст) → bot → user(фото)
   // має знайти фото за 4 кроки.

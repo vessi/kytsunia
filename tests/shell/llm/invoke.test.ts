@@ -790,6 +790,98 @@ describe("invokeLlmReply: vision", () => {
   });
 });
 
+describe("invokeLlmReply: reply thread", () => {
+  const opened: InvokeLlmDeps[] = [];
+  afterEach(() => {
+    for (const d of opened.splice(0)) d.db.close();
+  });
+
+  function threadCtx(replyToMessage: Record<string, unknown>, text = "а чому саме так?") {
+    const reply = vi.fn().mockResolvedValue({ message_id: 12345, date: 0 });
+    return {
+      message: {
+        message_id: 500,
+        chat: { id: 1 },
+        from: { id: 7, first_name: "Andriy" },
+        date: 0,
+        text,
+        reply_to_message: replyToMessage,
+      },
+      chat: { id: 1 },
+      from: { id: 7, first_name: "Andriy" },
+      reply,
+    } as unknown as Context;
+  }
+
+  it("puts the reply chain into the system tail, target last", async () => {
+    const llm = makeFakeLlm();
+    const deps = makeBaseDeps({ llmClient: llm.client });
+    opened.push(deps);
+    const append = makeMessageAppender(deps.db);
+    // Давня розмова, що вже випала б із recent, якби чат був жвавий.
+    append({
+      chatId: 1,
+      messageId: 100,
+      ts: 100,
+      senderId: 7,
+      senderName: "Andriy",
+      text: "що взяти з віскі?",
+      kind: "text",
+    });
+    append({
+      chatId: 1,
+      messageId: 101,
+      ts: 101,
+      senderId: 9999,
+      senderName: "Кицюня",
+      text: "Lagavulin 16, не дякуй.",
+      kind: "text",
+      replyTo: { messageId: 100, authorId: 7, authorName: "Andriy" },
+    });
+
+    const ctx = threadCtx({
+      message_id: 101,
+      from: { id: 9999, first_name: "Кицюня" },
+      text: "Lagavulin 16, не дякуй.",
+    });
+    await invokeLlmReply(ctx, 500, deps);
+
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    const tail = system[1]?.text ?? "";
+    expect(tail).toContain("Гілка, на яку відповідає користувач");
+    expect(tail).toContain("Andriy: що взяти з віскі?\nКицюня: Lagavulin 16, не дякуй.");
+    // Сама персона лишається чистим кешованим префіксом.
+    expect(system[0]?.text).toBe("P");
+  });
+
+  it("still shows the target when the DB has never seen it", async () => {
+    const llm = makeFakeLlm();
+    const deps = makeBaseDeps({ llmClient: llm.client });
+    opened.push(deps);
+
+    const ctx = threadCtx({
+      message_id: 42,
+      from: { id: 8, first_name: "Olha" },
+      text: "а я б Ardbeg брала",
+    });
+    await invokeLlmReply(ctx, 500, deps);
+
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system[1]?.text).toContain("Olha: а я б Ardbeg брала");
+  });
+
+  it("adds no thread section without a reply", async () => {
+    const llm = makeFakeLlm();
+    const deps = makeBaseDeps({ llmClient: llm.client });
+    opened.push(deps);
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    await invokeLlmReply(ctx, 999, deps);
+
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system.map((b) => b.text).join("\n")).not.toContain("Гілка");
+  });
+});
+
 describe("invokeLlmReply: web search", () => {
   const opened: InvokeLlmDeps[] = [];
 

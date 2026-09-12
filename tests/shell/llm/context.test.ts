@@ -66,6 +66,37 @@ describe("buildLlmRequest", () => {
     expect(profileIdx).toBeLessThan(contextIdx);
   });
 
+  it("appends the reply thread after recent context, marking the target", () => {
+    const req = buildLlmRequest(
+      { senderName: "Andriy", text: "а чому саме так?" },
+      [{ senderName: "Olha", text: "тут" }],
+      "PERSONA",
+      [],
+      [
+        { senderName: "Andriy", text: "що взяти?" },
+        { senderName: "Кицюня", text: "Lagavulin" },
+      ],
+    );
+    expect(req.system).toHaveLength(2);
+    const tail = req.system[1]?.text ?? "";
+    expect(tail).toContain("Гілка, на яку відповідає користувач");
+    expect(tail).toContain("Andriy: що взяти?\nКицюня: Lagavulin");
+    expect(tail.indexOf("Контекст")).toBeLessThan(tail.indexOf("Гілка"));
+    expect(req.system[0]?.text).toBe("PERSONA");
+  });
+
+  it("adds the tail block for a thread even without recent messages", () => {
+    const req = buildLlmRequest(
+      { senderName: "Andriy", text: "?" },
+      [],
+      "PERSONA",
+      [],
+      [{ senderName: "Кицюня", text: "Lagavulin" }],
+    );
+    expect(req.system).toHaveLength(2);
+    expect(req.system[1]?.text).toContain("Кицюня: Lagavulin");
+  });
+
   it("keeps persona as a separate block from the mutable tail", () => {
     const req = buildLlmRequest(
       { senderName: "Andriy", text: "?" },
