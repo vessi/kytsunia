@@ -75,6 +75,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     record: vi.fn(),
     checkUserRate: vi.fn().mockReturnValue({ used: 0, limit: 100, allowed: true }),
     checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 1000, allowed: true }),
+    usageSummary: vi.fn(),
   };
   const regularsStore = {
     upsert: vi.fn(),
@@ -492,6 +493,7 @@ describe("invokeLlmReply: vision", () => {
         record: vi.fn(),
         checkUserRate: vi.fn().mockReturnValue({ used: 0, limit: 100, allowed: true }),
         checkGlobalRate: vi.fn().mockReturnValue({ used: 100, cap: 100, allowed: false }),
+        usageSummary: vi.fn(),
       },
     });
     dbsToClose.push(deps.db);
@@ -992,6 +994,7 @@ describe("invokeLlmReply: web search", () => {
         record: vi.fn(),
         checkUserRate: vi.fn().mockReturnValue({ used: 13, limit: 15, allowed: true }),
         checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 1000, allowed: true }),
+        usageSummary: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, deps, SEARCH);
@@ -1012,6 +1015,7 @@ describe("invokeLlmReply: web search", () => {
         record: vi.fn(),
         checkUserRate: vi.fn().mockReturnValue({ used: 13, limit: 15, allowed: true }),
         checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 1000, allowed: true }),
+        usageSummary: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, deps);
@@ -1032,6 +1036,7 @@ describe("invokeLlmReply: web search", () => {
         record: vi.fn(),
         checkUserRate: vi.fn().mockReturnValue({ used: 0, limit: 15, allowed: true }),
         checkGlobalRate: vi.fn().mockReturnValue({ used: 998, cap: 1000, allowed: true }),
+        usageSummary: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, deps, SEARCH);
@@ -1150,6 +1155,7 @@ describe("invokeLlmReply: typing indicator", () => {
           record: vi.fn(),
           checkUserRate: vi.fn().mockReturnValue({ used: 100, limit: 100, allowed: false }),
           checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 1000, allowed: true }),
+          usageSummary: vi.fn(),
         },
       }),
     );

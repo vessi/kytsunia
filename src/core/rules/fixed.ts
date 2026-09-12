@@ -217,6 +217,20 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, звіт» — за 7 днів, «Кицюня, звіт 30» — за 30. Admin only, тиха
+    // ігнорація для інших, як і в say_in_chat. Роздільник після «звіт»
+    // обовʼязковий, щоб не ловити «звітність».
+    name: "usage_report",
+    pattern: /(К|к)ицюн(я|ю), звіт(?:\s+(\d+))?(?:[!?.\s,]|$)/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const raw = match[3];
+      const parsed = raw ? Number.parseInt(raw, 10) : 7;
+      const days = Math.min(Math.max(Number.isNaN(parsed) ? 7 : parsed, 1), 90);
+      return [{ kind: "report_usage", replyTo: input.messageId, days }];
+    },
+  },
+  {
     name: "rate_status",
     pattern: /(К|к)ицюн(я|ю), скільки в мене лишилось\??/,
     produce: (input) => [

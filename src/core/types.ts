@@ -53,7 +53,9 @@ export type Action =
   // shell, щоб core лишався без знання про env.
   | { kind: "invoke_digest"; replyTo: number; count?: number }
   // Явний пошук. query порожній, коли шукати треба за повідомленням чи фото, на яке відповіли.
-  | { kind: "invoke_web_search"; replyTo: number; query: string };
+  | { kind: "invoke_web_search"; replyTo: number; query: string }
+  // Адмінський звіт про витрати на модель за останні days днів (включно з сьогодні).
+  | { kind: "report_usage"; replyTo: number; days: number };
 
 export type DynamicRuleSpec = {
   pattern: string;

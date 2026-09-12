@@ -543,3 +543,44 @@ describe("fixedRules: web_search", () => {
     expect(rule.pattern.test("Кицюня, пошукайте курс")).toBe(false);
   });
 });
+
+describe("fixedRules: usage_report", () => {
+  const rule = findRule("usage_report");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+
+  it("defaults to 7 days for the admin", () => {
+    const input = buildInput({ text: "Кицюня, звіт" });
+    const m = rule.pattern.exec(input.text);
+    expect(m).not.toBeNull();
+    if (!m) return;
+    expect(rule.produce(input, m, admin)).toEqual([
+      { kind: "report_usage", replyTo: 100, days: 7 },
+    ]);
+  });
+
+  it("parses an explicit day count and clamps it to 90", () => {
+    for (const [text, days] of [
+      ["Кицюня, звіт 30", 30],
+      ["Кицюня, звіт 365", 90],
+      ["Кицюня, звіт 0", 1],
+    ] as const) {
+      const input = buildInput({ text });
+      const m = rule.pattern.exec(text);
+      expect(m).not.toBeNull();
+      if (!m) return;
+      expect(rule.produce(input, m, admin)).toEqual([{ kind: "report_usage", replyTo: 100, days }]);
+    }
+  });
+
+  it("is silently ignored for non-admins", () => {
+    const input = buildInput({ text: "Кицюня, звіт", senderId: 301 });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([]);
+    expect(rule.produce(input, m, buildState())).toEqual([]);
+  });
+
+  it("does not match words that merely start with звіт", () => {
+    expect(rule.pattern.test("Кицюня, звітність це нудно")).toBe(false);
+  });
+});

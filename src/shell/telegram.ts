@@ -8,6 +8,8 @@ import type { LlmCallStore } from "./storage/llm-calls.js";
 import type { OptOutsStore } from "./storage/opt-outs.js";
 import type { RegularsStore } from "./storage/regulars.js";
 import type { DynamicRuleStore } from "./storage/rules.js";
+import { startOfKyivDay } from "./time.js";
+import { formatUsageReport } from "./usage-report.js";
 
 export type ExecuteDeps = {
   insults: string[];
@@ -151,6 +153,21 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       } else {
         text = "Усе, на сьогодні нуль. Завтра.";
       }
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "report_usage": {
+      const DAY_MS = 86_400_000;
+      const todayStart = startOfKyivDay();
+      // days=1 означає «лише сьогодні»: період починається з початку дня.
+      const sinceTs = todayStart - (action.days - 1) * DAY_MS;
+      const text = formatUsageReport({
+        days: action.days,
+        sinceTs,
+        period: deps.llmCallStore.usageSummary(sinceTs),
+        today: deps.llmCallStore.usageSummary(todayStart),
+        currentChatId: ctx.chat?.id ?? 0,
+      });
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }

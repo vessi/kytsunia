@@ -34,10 +34,31 @@ export type GlobalRateCheck = {
   allowed: boolean;
 };
 
+export type UsageBucket = {
+  calls: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+};
+
+// Зведення успішних викликів з sinceTs. Помилки й відмови по ліміту — окремими
+// лічильниками, у токени й вартість вони не входять.
+export type UsageSummary = {
+  ok: UsageBucket;
+  errors: number;
+  rateLimited: number;
+  byChat: Array<{ chatId: number } & UsageBucket>;
+  byUser: Array<{ userId: number; userName: string; calls: number; costUsd: number }>;
+  byModel: Array<{ model: string; calls: number; costUsd: number }>;
+};
+
 export type LlmCallStore = {
   record: (record: CallRecord) => void;
   checkUserRate: (userId: number, defaultLimit: number) => RateCheck;
   checkGlobalRate: (cap: number) => GlobalRateCheck;
+  usageSummary: (sinceTs: number) => UsageSummary;
 };
 
 interface UserLimitRow {
@@ -66,7 +87,51 @@ export function makeLlmCallStore(db: Db): LlmCallStore {
     "SELECT COALESCE(SUM(weight), 0) as n FROM llm_calls WHERE ts >= ? AND status = 'ok'",
   );
 
+  const BUCKET_COLS = `
+    COUNT(*) as calls,
+    COALESCE(SUM(cost_usd), 0) as costUsd,
+    COALESCE(SUM(input_tokens), 0) as inputTokens,
+    COALESCE(SUM(output_tokens), 0) as outputTokens,
+    COALESCE(SUM(cache_read_tokens), 0) as cacheReadTokens,
+    COALESCE(SUM(cache_write_tokens), 0) as cacheWriteTokens`;
+  const totalStmt = db.prepare(
+    `SELECT ${BUCKET_COLS} FROM llm_calls WHERE ts >= ? AND status = 'ok'`,
+  );
+  const statusStmt = db.prepare(
+    "SELECT status, COUNT(*) as n FROM llm_calls WHERE ts >= ? GROUP BY status",
+  );
+  const byChatStmt = db.prepare(
+    `SELECT chat_id as chatId, ${BUCKET_COLS} FROM llm_calls
+     WHERE ts >= ? AND status = 'ok' GROUP BY chat_id ORDER BY costUsd DESC, calls DESC`,
+  );
+  // Імʼя беремо з останнього виклику — люди перейменовуються.
+  const byUserStmt = db.prepare(
+    `SELECT user_id as userId, COALESCE(MAX(user_name), '') as userName,
+            COUNT(*) as calls, COALESCE(SUM(cost_usd), 0) as costUsd
+     FROM llm_calls WHERE ts >= ? AND status = 'ok'
+     GROUP BY user_id ORDER BY costUsd DESC, calls DESC LIMIT 5`,
+  );
+  const byModelStmt = db.prepare(
+    `SELECT model, COUNT(*) as calls, COALESCE(SUM(cost_usd), 0) as costUsd
+     FROM llm_calls WHERE ts >= ? AND status = 'ok'
+     GROUP BY model ORDER BY costUsd DESC, calls DESC`,
+  );
+
   return {
+    usageSummary: (sinceTs) => {
+      const ok = totalStmt.get(sinceTs) as UsageBucket;
+      const statuses = statusStmt.all(sinceTs) as Array<{ status: CallStatus; n: number }>;
+      const count = (st: CallStatus) => statuses.find((r) => r.status === st)?.n ?? 0;
+      return {
+        ok,
+        errors: count("error"),
+        rateLimited: count("rate_limited"),
+        byChat: byChatStmt.all(sinceTs) as UsageSummary["byChat"],
+        byUser: byUserStmt.all(sinceTs) as UsageSummary["byUser"],
+        byModel: byModelStmt.all(sinceTs) as UsageSummary["byModel"],
+      };
+    },
+
     record: (r) => {
       insertStmt.run(
         r.ts,

@@ -168,3 +168,108 @@ describe("llmCallStore", () => {
     });
   });
 });
+
+describe("llmCallStore.usageSummary", () => {
+  let db: Database.Database;
+  let store: ReturnType<typeof makeLlmCallStore>;
+
+  beforeEach(() => {
+    db = openTestDb();
+    store = makeLlmCallStore(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  const base = {
+    chatId: 1,
+    userId: 100,
+    userName: "Andriy",
+    triggerMsgId: 1,
+    model: "claude-sonnet-5",
+  };
+
+  it("sums only successful calls and counts the rest separately", () => {
+    store.record({
+      ...base,
+      ts: 1000,
+      status: "ok",
+      costUsd: 0.01,
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 900,
+      cacheWriteTokens: 0,
+    });
+    store.record({ ...base, ts: 1001, status: "error", errorMessage: "boom" });
+    store.record({ ...base, ts: 1002, status: "rate_limited", errorMessage: "user_limit" });
+    store.record({ ...base, ts: 1003, status: "rate_limited", errorMessage: "global_cap" });
+
+    const s = store.usageSummary(0);
+    expect(s.ok).toEqual({
+      calls: 1,
+      costUsd: 0.01,
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 900,
+      cacheWriteTokens: 0,
+    });
+    expect(s.errors).toBe(1);
+    expect(s.rateLimited).toBe(2);
+  });
+
+  it("respects the since timestamp", () => {
+    store.record({ ...base, ts: 500, status: "ok", costUsd: 1 });
+    store.record({ ...base, ts: 1500, status: "ok", costUsd: 2 });
+    const s = store.usageSummary(1000);
+    expect(s.ok.calls).toBe(1);
+    expect(s.ok.costUsd).toBe(2);
+  });
+
+  it("groups by chat, user and model, most expensive first", () => {
+    store.record({
+      ...base,
+      ts: 1,
+      chatId: 1,
+      userId: 100,
+      userName: "Andriy",
+      status: "ok",
+      costUsd: 0.1,
+    });
+    store.record({
+      ...base,
+      ts: 2,
+      chatId: 2,
+      userId: 200,
+      userName: "Olha",
+      status: "ok",
+      costUsd: 0.5,
+    });
+    store.record({
+      ...base,
+      ts: 3,
+      chatId: 2,
+      userId: 200,
+      userName: "Olha",
+      model: "claude-haiku-4-5-20251001",
+      status: "ok",
+      costUsd: 0.05,
+    });
+
+    const s = store.usageSummary(0);
+    expect(s.byChat.map((c) => [c.chatId, c.calls])).toEqual([
+      [2, 2],
+      [1, 1],
+    ]);
+    expect(s.byUser.map((u) => u.userName)).toEqual(["Olha", "Andriy"]);
+    expect(s.byModel.map((m) => m.model)).toEqual(["claude-sonnet-5", "claude-haiku-4-5-20251001"]);
+  });
+
+  it("returns zeros when there is nothing", () => {
+    const s = store.usageSummary(0);
+    expect(s.ok.calls).toBe(0);
+    expect(s.ok.costUsd).toBe(0);
+    expect(s.byChat).toEqual([]);
+    expect(s.byUser).toEqual([]);
+  });
+});

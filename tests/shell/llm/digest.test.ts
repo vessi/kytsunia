@@ -184,6 +184,7 @@ describe("invokeDigest", () => {
         record: vi.fn(),
         checkUserRate: vi.fn().mockReturnValue({ used: 0, limit: 15, allowed: true }),
         checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 150, allowed: true }),
+        usageSummary: vi.fn(),
       },
       db,
       model: "claude-sonnet-5",
@@ -241,6 +242,7 @@ describe("invokeDigest", () => {
         record: vi.fn(),
         checkUserRate: vi.fn().mockReturnValue({ used: 13, limit: 15, allowed: true }),
         checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 150, allowed: true }),
+        usageSummary: vi.fn(),
       },
     });
     seed(10);
@@ -263,6 +265,7 @@ describe("invokeDigest", () => {
         record: vi.fn(),
         checkUserRate: vi.fn().mockReturnValue({ used: 0, limit: 15, allowed: true }),
         checkGlobalRate: vi.fn().mockReturnValue({ used: 149, cap: 150, allowed: true }),
+        usageSummary: vi.fn(),
       },
     });
     seed(10);
@@ -284,6 +287,7 @@ describe("invokeDigest", () => {
         record: vi.fn(),
         checkUserRate: vi.fn().mockReturnValue({ used: 0, limit: null, allowed: true }),
         checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 150, allowed: true }),
+        usageSummary: vi.fn(),
       },
     });
     seed(10);
