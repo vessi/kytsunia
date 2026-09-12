@@ -27,6 +27,9 @@ if (!config.ANTHROPIC_API_KEY) {
 
 const inputsPath = "data/persona-evals/inputs.json";
 const outDir = "data/persona-evals/runs";
+// Скільки разів проганяти кожен вхід. Одна відповідь — один семпл; для
+// порівняння моделей чи варіантів промпта треба хоча б 3.
+const runs = Math.max(1, Number.parseInt(process.env.EVAL_RUNS ?? "1", 10) || 1);
 
 if (!existsSync(inputsPath)) {
   log.error({ path: inputsPath }, "inputs file not found");
@@ -46,18 +49,21 @@ const persona = buildPersonaPrompt({
   searchEnabled: config.KYTSUNIA_SEARCH_ENABLED,
 });
 
-log.info({ count: inputs.length, model: config.LLM_MODEL }, "starting persona eval");
+log.info({ count: inputs.length, runs, model: config.LLM_MODEL }, "starting persona eval");
 
 if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 const ts = new Date().toISOString().replace(/[:.]/g, "-");
-const outPath = `${outDir}/${ts}.md`;
+const outPath = `${outDir}/${ts}-${config.LLM_MODEL}.md`;
 
 const lines: string[] = [];
 let totalCost = 0;
+let totalOutputTokens = 0;
+let totalReplies = 0;
 
 lines.push(`# Persona eval: ${ts}`);
 lines.push("");
 lines.push(`- Model: \`${config.LLM_MODEL}\``);
+lines.push(`- Runs per input: ${runs}`);
 lines.push(`- Persona length: ${persona.length} chars`);
 lines.push("");
 lines.push("---");
@@ -87,26 +93,30 @@ for (const item of inputs) {
   lines.push(`**Запит:** ${item.input}`);
   lines.push("");
 
-  try {
-    const reply = await client.reply(system, userMessage, config.LLM_MODEL);
-    const cost =
-      calculateCost(config.LLM_MODEL, {
-        inputTokens: reply.inputTokens,
-        outputTokens: reply.outputTokens,
-        cacheReadTokens: reply.cacheReadTokens,
-        cacheWriteTokens: reply.cacheWriteTokens,
-      }) ?? 0;
-    totalCost += cost;
+  for (let run = 1; run <= runs; run++) {
+    try {
+      const reply = await client.reply(system, userMessage, config.LLM_MODEL);
+      const cost =
+        calculateCost(config.LLM_MODEL, {
+          inputTokens: reply.inputTokens,
+          outputTokens: reply.outputTokens,
+          cacheReadTokens: reply.cacheReadTokens,
+          cacheWriteTokens: reply.cacheWriteTokens,
+        }) ?? 0;
+      totalCost += cost;
+      totalOutputTokens += reply.outputTokens;
+      totalReplies += 1;
 
-    lines.push("**Відповідь:**");
-    lines.push(`> ${reply.text.split("\n").join("\n> ")}`);
-    lines.push("");
-    lines.push(
-      `*${reply.inputTokens} in / ${reply.outputTokens} out, $${cost.toFixed(5)}*`,
-    );
-  } catch (err) {
-    lines.push("**ERROR:**");
-    lines.push(`> ${err instanceof Error ? err.message : String(err)}`);
+      lines.push(runs > 1 ? `**Відповідь ${run}:**` : "**Відповідь:**");
+      lines.push(`> ${reply.text.split("\n").join("\n> ")}`);
+      lines.push("");
+      lines.push(`*${reply.inputTokens} in / ${reply.outputTokens} out, $${cost.toFixed(5)}*`);
+      lines.push("");
+    } catch (err) {
+      lines.push("**ERROR:**");
+      lines.push(`> ${err instanceof Error ? err.message : String(err)}`);
+      lines.push("");
+    }
   }
 
   lines.push("");
@@ -114,6 +124,9 @@ for (const item of inputs) {
   lines.push("");
 }
 
+lines.push(
+  `**Replies:** ${totalReplies}, avg ${totalReplies > 0 ? (totalOutputTokens / totalReplies).toFixed(1) : "0"} output tokens`,
+);
 lines.push(`**Total cost:** $${totalCost.toFixed(4)}`);
 lines.push("");
 

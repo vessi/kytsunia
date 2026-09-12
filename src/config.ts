@@ -15,7 +15,9 @@ const envSchema = z.object({
   // LLM-настройки
   DEFAULT_DAILY_LLM_LIMIT: envValue(z.coerce.number().int().positive().default(15)),
   GLOBAL_DAILY_LLM_CAP: envValue(z.coerce.number().int().positive().default(150)),
-  LLM_MODEL: envValue(z.string().default("claude-haiku-4-5-20251001")),
+  // Sonnet 5, а не Haiku: краща українська, і персона (~2k токенів) кешується —
+  // у Haiku 4.5 мінімальний префікс для кешу 4096 токенів, тож там кеш не працює.
+  LLM_MODEL: envValue(z.string().default("claude-sonnet-5")),
   // Vision (фото у відповідях). Фіче-флаг — щоб можна було вимкнути без релізу.
   KYTSUNIA_VISION_ENABLED: envValue(
     z
