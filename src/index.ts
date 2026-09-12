@@ -6,7 +6,7 @@ import { loadInsults } from "./shell/insults.js";
 import { makeLlmClient } from "./shell/llm/anthropic.js";
 import type { InvokeDigestDeps } from "./shell/llm/digest.js";
 import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
-import { DIGEST_PROMPT, PERSONA_PROMPT, SEARCH_PROMPT } from "./shell/llm/persona.js";
+import { buildPersonaPrompt, DIGEST_PROMPT, SEARCH_PROMPT } from "./shell/llm/persona.js";
 import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
 import { openDb } from "./shell/storage/db.js";
@@ -66,12 +66,20 @@ const botUserId = bot.botInfo.id;
 const botName = bot.botInfo.first_name ?? "Кицюня";
 log.info({ username: bot.botInfo.username, id: botUserId }, "bot info loaded");
 
+const persona = buildPersonaPrompt({
+  model: config.LLM_MODEL,
+  digestModel: config.KYTSUNIA_DIGEST_MODEL,
+  visionEnabled: config.KYTSUNIA_VISION_ENABLED,
+  digestEnabled: config.KYTSUNIA_DIGEST_ENABLED,
+  searchEnabled: config.KYTSUNIA_SEARCH_ENABLED,
+});
+
 const invokeLlmDeps: InvokeLlmDeps = {
   llmClient,
   llmCallStore,
   db,
   model: config.LLM_MODEL,
-  persona: PERSONA_PROMPT,
+  persona,
   defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
   globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
   recentContextSize: 10,

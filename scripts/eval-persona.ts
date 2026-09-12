@@ -3,7 +3,7 @@ import { z } from "zod";
 import { loadConfig } from "../src/config.js";
 import { makeLlmClient } from "../src/shell/llm/anthropic.js";
 import { buildLlmRequest } from "../src/shell/llm/context.js";
-import { PERSONA_PROMPT } from "../src/shell/llm/persona.js";
+import { buildPersonaPrompt } from "../src/shell/llm/persona.js";
 import { calculateCost } from "../src/shell/llm/pricing.js";
 import { createLogger } from "../src/shell/logger.js";
 
@@ -37,6 +37,15 @@ const inputs = InputsFileSchema.parse(JSON.parse(readFileSync(inputsPath, "utf-8
 
 const client = makeLlmClient(config.ANTHROPIC_API_KEY);
 
+// Той самий промпт, що й у проді, — інакше eval міряє не те.
+const persona = buildPersonaPrompt({
+  model: config.LLM_MODEL,
+  digestModel: config.KYTSUNIA_DIGEST_MODEL,
+  visionEnabled: config.KYTSUNIA_VISION_ENABLED,
+  digestEnabled: config.KYTSUNIA_DIGEST_ENABLED,
+  searchEnabled: config.KYTSUNIA_SEARCH_ENABLED,
+});
+
 log.info({ count: inputs.length, model: config.LLM_MODEL }, "starting persona eval");
 
 if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
@@ -49,7 +58,7 @@ let totalCost = 0;
 lines.push(`# Persona eval: ${ts}`);
 lines.push("");
 lines.push(`- Model: \`${config.LLM_MODEL}\``);
-lines.push(`- Persona length: ${PERSONA_PROMPT.length} chars`);
+lines.push(`- Persona length: ${persona.length} chars`);
 lines.push("");
 lines.push("---");
 lines.push("");
@@ -59,7 +68,7 @@ for (const item of inputs) {
   const { system, userMessage } = buildLlmRequest(
     { senderName: "Test", text: item.input },
     item.context,
-    PERSONA_PROMPT,
+    persona,
   );
 
   lines.push(`## ${item.id}`);
