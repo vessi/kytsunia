@@ -6,7 +6,7 @@ function buildInput(overrides: Partial<MessageInput> = {}): MessageInput {
   return {
     text: "",
     messageId: 1,
-    chatId: 1,
+    chatId: -100,
     senderId: 1,
     senderName: "x",
     ts: 0,
@@ -26,6 +26,23 @@ function buildState(overrides: Partial<State["policy"]> = {}): State {
 describe("matchLlmFallback", () => {
   it("returns null for messages without addressing or reply", () => {
     expect(matchLlmFallback(buildInput({ text: "просто текст" }), buildState())).toBeNull();
+  });
+
+  it("matches any message in a private chat without addressing", () => {
+    const result = matchLlmFallback(
+      buildInput({ text: "привіт, як справи?", chatId: 42, senderId: 42 }),
+      buildState(),
+    );
+    expect(result?.[0]?.kind).toBe("invoke_llm_reply");
+  });
+
+  it("still requires addressing when chat id differs from sender id", () => {
+    expect(
+      matchLlmFallback(
+        buildInput({ text: "привіт, як справи?", chatId: -100, senderId: 42 }),
+        buildState(),
+      ),
+    ).toBeNull();
   });
 
   it("matches Кицюня address", () => {
