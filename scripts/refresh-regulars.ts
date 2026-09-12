@@ -14,7 +14,7 @@ const { values } = parseArgs({
     "limit-messages": { type: "string", default: "200" },
     user: { type: "string" },
     chat: { type: "string" },
-    model: { type: "string", default: "claude-sonnet-4-6" },
+    model: { type: "string", default: "claude-sonnet-5" },
     "dry-run": { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
@@ -30,7 +30,7 @@ Options:
   --limit-messages <n>  Max messages per user-chat sent to LLM (default 200)
   --user <user_id>      Refresh single user only (across all their chats)
   --chat <chat_id>      Refresh single chat only
-  --model <name>        LLM model (default claude-sonnet-4-6)
+  --model <name>        LLM model (default claude-sonnet-5)
   --dry-run             Print profiles without saving
   -h, --help            Show this help
 
@@ -54,7 +54,7 @@ const limitMessages = Number.parseInt(values["limit-messages"] ?? "200", 10);
 const targetUser = values.user ? Number.parseInt(values.user, 10) : undefined;
 const targetChat = values.chat ? Number.parseInt(values.chat, 10) : undefined;
 const dryRun = values["dry-run"] ?? false;
-const model = values.model ?? "claude-sonnet-4-6";
+const model = values.model ?? "claude-sonnet-5";
 
 log.info(
   { threshold, days, limitMessages, targetUser, targetChat, dryRun, model },
