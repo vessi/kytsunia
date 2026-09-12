@@ -11,7 +11,7 @@ import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
 import { openDb } from "./shell/storage/db.js";
 import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
-import { makeMessageAppender } from "./shell/storage/messages.js";
+import { makeMessageAppender, makeMessageEditor } from "./shell/storage/messages.js";
 import { makeOptOutsStore } from "./shell/storage/opt-outs.js";
 import { makePhotoCacheStore } from "./shell/storage/photo-cache.js";
 import { makeRegularsStore } from "./shell/storage/regulars.js";
@@ -37,6 +37,7 @@ log.info({ count: insults.length }, "insults loaded");
 
 const dynamicRuleStore = makeDynamicRuleStore(db, log);
 const appendMessage = makeMessageAppender(db);
+const editMessage = makeMessageEditor(db);
 const photoCacheStore = makePhotoCacheStore(db);
 
 const llmClient = makeLlmClient(config.ANTHROPIC_API_KEY);
@@ -182,6 +183,17 @@ bot.on("message", async (ctx) => {
       log.error({ err: err instanceof Error ? err.message : err }, "action execution failed");
     }
   }
+});
+
+// Правка тексту чи підпису. Правила заново не проганяємо: відредаговане
+// «Кицюня, ...» не має викликати її вдруге. Оновлюємо лише збережений текст,
+// щоб контекст і дайджест бачили актуальну версію.
+bot.on("edited_message", (ctx) => {
+  const m = ctx.editedMessage;
+  const text = m.text ?? m.caption;
+  if (text === undefined) return;
+  const updated = editMessage(m.chat.id, m.message_id, text);
+  log.debug({ chatId: m.chat.id, msgId: m.message_id, updated }, "message edited");
 });
 
 bot.catch((err) => {

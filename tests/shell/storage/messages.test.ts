@@ -1,7 +1,11 @@
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { MessageInput } from "../../../src/core/types.js";
-import { getRecentMessages, makeMessageAppender } from "../../../src/shell/storage/messages.js";
+import {
+  getRecentMessages,
+  makeMessageAppender,
+  makeMessageEditor,
+} from "../../../src/shell/storage/messages.js";
 import { openTestDb } from "../../helpers/db.js";
 
 function msg(overrides: Partial<MessageInput> & Pick<MessageInput, "messageId">): MessageInput {
@@ -28,6 +32,38 @@ describe("messages storage", () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  it("updates the text of an edited message in place", () => {
+    const edit = makeMessageEditor(db);
+    append(msg({ messageId: 1, text: "првіт" }));
+    append(msg({ messageId: 2, text: "як справи" }));
+
+    expect(edit(1, 1, "привіт")).toBe(true);
+
+    const recent = getRecentMessages(db, 1, 10);
+    expect(recent.map((r) => r.text)).toEqual(["привіт", "як справи"]);
+  });
+
+  it("updates a photo caption without touching the photo", () => {
+    const edit = makeMessageEditor(db);
+    append(
+      msg({ messageId: 1, kind: "photo", text: "стара", photoFileId: "f", photoUniqueId: "u" }),
+    );
+
+    expect(edit(1, 1, "нова")).toBe(true);
+
+    const recent = getRecentMessages(db, 1, 10);
+    expect(recent[0]?.text).toBe("нова");
+    expect(recent[0]?.photos).toEqual([{ fileId: "f", uniqueId: "u" }]);
+  });
+
+  it("ignores edits of messages it never stored", () => {
+    const edit = makeMessageEditor(db);
+    append(msg({ messageId: 1, text: "є" }));
+    expect(edit(1, 999, "нема")).toBe(false);
+    expect(edit(2, 1, "інший чат")).toBe(false);
+    expect(getRecentMessages(db, 1, 10).map((r) => r.text)).toEqual(["є"]);
   });
 
   it("stores and reads back text-only messages", () => {

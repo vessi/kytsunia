@@ -3,10 +3,13 @@ import type { Db } from "./db.js";
 
 export type MessageAppender = (input: MessageInput) => void;
 
+// Повертає true, якщо повідомлення було в DB і текст оновлено.
+export type MessageEditor = (chatId: number, messageId: number, text: string) => boolean;
+
 /**
  * Створює функцію appendMessage з cached prepared statement.
  * INSERT OR IGNORE: при колізії (chat_id, msg_id) залишаємо першу версію.
- * Edits ловляться через окремий 'edited_message' event, не дублюються тут.
+ * Правки приходять окремою подією edited_message і йдуть через makeMessageEditor.
  */
 export function makeMessageAppender(db: Db): MessageAppender {
   const stmt = db.prepare(`
@@ -36,6 +39,17 @@ export function makeMessageAppender(db: Db): MessageAppender {
       input.mediaGroupId ?? null,
     );
   };
+}
+
+/**
+ * Оновлює текст (або caption) уже збереженого повідомлення після edited_message.
+ * Тільки текст: медіа в Telegram при редагуванні не міняється так, щоб це нас
+ * цікавило, а reply_to і sender незмінні за визначенням. Повідомлення, якого
+ * в DB немає (старіше за історію бота), мовчки пропускаємо.
+ */
+export function makeMessageEditor(db: Db): MessageEditor {
+  const stmt = db.prepare("UPDATE messages SET text = ? WHERE chat_id = ? AND msg_id = ?");
+  return (chatId, messageId, text) => stmt.run(text, chatId, messageId).changes > 0;
 }
 
 export type RecentMessageRow = {
