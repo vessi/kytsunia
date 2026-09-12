@@ -46,3 +46,20 @@ export function formatKyivDate(ts: number): string {
     year: "numeric",
   }).format(new Date(ts));
 }
+
+/**
+ * Повна позначка «зараз» для system prompt: день тижня, дата, час за Києвом.
+ * Наприклад: «субота, 12 вересня 2026 р., 08:15».
+ */
+export function formatKyivNow(ts: number): string {
+  return new Intl.DateTimeFormat("uk-UA", {
+    timeZone: "Europe/Kyiv",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(ts));
+}

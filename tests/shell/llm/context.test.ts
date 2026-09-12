@@ -97,6 +97,35 @@ describe("buildLlmRequest", () => {
     expect(req.system[1]?.text).toContain("Кицюня: Lagavulin");
   });
 
+  it("puts the current Kyiv date and time at the top of the tail, never in persona", () => {
+    // 2026-09-12T05:15:00Z = субота, 08:15 за Києвом (UTC+3, літній час).
+    const req = buildLlmRequest(
+      { senderName: "Andriy", text: "яке сьогодні число?" },
+      [{ senderName: "Olha", text: "тут" }],
+      "PERSONA",
+      [],
+      [],
+      Date.UTC(2026, 8, 12, 5, 15),
+    );
+    expect(req.system[0]?.text).toBe("PERSONA");
+    const tail = req.system[1]?.text ?? "";
+    expect(tail.startsWith("Зараз субота, 12 вересня 2026 р. о 08:15 за київським часом.")).toBe(
+      true,
+    );
+    expect(tail.indexOf("Зараз")).toBeLessThan(tail.indexOf("Контекст"));
+  });
+
+  it("adds the tail block for the date even with nothing else", () => {
+    const req = buildLlmRequest({ senderName: "A", text: "?" }, [], "PERSONA", [], [], 0);
+    expect(req.system).toHaveLength(2);
+    expect(req.system[1]?.text).toContain("1970");
+  });
+
+  it("omits the date line when now is not given", () => {
+    const req = buildLlmRequest({ senderName: "A", text: "?" }, [], "PERSONA");
+    expect(req.system).toHaveLength(1);
+  });
+
   it("keeps persona as a separate block from the mutable tail", () => {
     const req = buildLlmRequest(
       { senderName: "Andriy", text: "?" },

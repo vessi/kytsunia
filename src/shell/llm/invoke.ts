@@ -405,6 +405,7 @@ export async function invokeLlmReply(
       persona,
       profiles,
       thread,
+      deps.now(),
     );
 
     try {

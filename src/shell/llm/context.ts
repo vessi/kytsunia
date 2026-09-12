@@ -1,3 +1,4 @@
+import { formatKyivNow } from "../time.js";
 import type { ImageContent, SystemBlock, UserContent } from "./anthropic.js";
 import type { ProfileEntry } from "./profiles.js";
 import type { ThreadMessage } from "./thread.js";
@@ -54,6 +55,9 @@ export function buildLlmRequest(
   persona: string,
   profiles: readonly ProfileEntry[] = [],
   thread: readonly ThreadMessage[] = [],
+  // Поточний час у мс. Без нього модель живе в даті свого навчання і відповідає
+  // на «яке сьогодні число» навмання. Йде в змінний хвіст, тож кеш не зачіпає.
+  nowMs?: number,
 ): LlmRequest {
   // Маркери [фото N] нумеруються глобально, синхронно з порядком image-blocks
   // нижче (історія в хронологічному порядку, потім поточні фото).
@@ -74,6 +78,9 @@ export function buildLlmRequest(
   //   [1] profiles + recent — мінливий хвіст, без кешу.
   // Якщо хвіст порожній — другий блок не додаємо, щоб не платити за порожній text.
   const tailSections: string[] = [];
+  if (nowMs !== undefined) {
+    tailSections.push(`Зараз ${formatKyivNow(nowMs)} за київським часом.`);
+  }
   if (profiles.length > 0) {
     const profilesText = profiles.map((p) => `${p.displayName}:\n${p.profile}`).join("\n\n");
     tailSections.push(`Профілі учасників (для розуміння стилю і інтересів):\n\n${profilesText}`);

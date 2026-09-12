@@ -75,6 +75,9 @@ for (const item of inputs) {
     { senderName: "Test", text: item.input },
     item.context,
     persona,
+    [],
+    [],
+    Date.now(),
   );
 
   lines.push(`## ${item.id}`);
