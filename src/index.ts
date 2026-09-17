@@ -10,6 +10,7 @@ import { buildPersonaPrompt, DIGEST_PROMPT, SEARCH_PROMPT } from "./shell/llm/pe
 import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
 import { openDb } from "./shell/storage/db.js";
+import { makeInstructionStore } from "./shell/storage/instructions.js";
 import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
 import { makeMessageAppender, makeMessageEditor } from "./shell/storage/messages.js";
 import { makeOptOutsStore } from "./shell/storage/opt-outs.js";
@@ -28,6 +29,7 @@ const db = openDb(config.DB_PATH, log);
 const llmCallStore = makeLlmCallStore(db);
 const regularsStore = makeRegularsStore(db);
 const optOutsStore = makeOptOutsStore(db);
+const instructionStore = makeInstructionStore(db);
 log.info({ dbPath: config.DB_PATH }, "database opened");
 log.info({ count: regularsStore.list().length }, "regulars loaded");
 log.info({ count: optOutsStore.list().length }, "profile opt-outs loaded");
@@ -86,6 +88,7 @@ const invokeLlmDeps: InvokeLlmDeps = {
   recentContextSize: 10,
   profilesLimit: 5,
   regularsStore,
+  instructionStore,
   rng: Math.random,
   log,
   visionEnabled: config.KYTSUNIA_VISION_ENABLED,
@@ -121,6 +124,7 @@ const invokeDigestDeps: InvokeDigestDeps = {
   globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
   log,
   startTyping,
+  instructionStore,
 };
 
 log.info(
@@ -178,6 +182,7 @@ bot.on("message", async (ctx) => {
         invokeDigestDeps,
         optOutsStore,
         regularsStore,
+        instructionStore,
       });
     } catch (err) {
       log.error({ err: err instanceof Error ? err.message : err }, "action execution failed");

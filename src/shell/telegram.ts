@@ -1,14 +1,15 @@
 import { type Context, InputFile } from "grammy";
 import type { Action, MessageInput, MessageKind } from "../core/types.js";
 import type { InvokeDigestDeps } from "./llm/digest.js";
-import { invokeDigest } from "./llm/digest.js";
+import { invokeDigest, truncateForTelegram } from "./llm/digest.js";
 import type { InvokeLlmDeps } from "./llm/invoke.js";
 import { invokeLlmReply } from "./llm/invoke.js";
+import type { InstructionStore } from "./storage/instructions.js";
 import type { LlmCallStore } from "./storage/llm-calls.js";
 import type { OptOutsStore } from "./storage/opt-outs.js";
 import type { RegularsStore } from "./storage/regulars.js";
 import type { DynamicRuleStore } from "./storage/rules.js";
-import { startOfKyivDay } from "./time.js";
+import { formatKyivDate, startOfKyivDay } from "./time.js";
 import { formatUsageReport } from "./usage-report.js";
 
 export type ExecuteDeps = {
@@ -21,6 +22,7 @@ export type ExecuteDeps = {
   invokeDigestDeps: InvokeDigestDeps;
   optOutsStore: OptOutsStore;
   regularsStore: RegularsStore;
+  instructionStore: InstructionStore;
 };
 
 export function toMessageInput(ctx: Context): MessageInput | null {
@@ -168,6 +170,28 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
         today: deps.llmCallStore.usageSummary(todayStart),
         currentChatId: ctx.chat?.id ?? 0,
       });
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "add_special_instruction": {
+      const saved = deps.instructionStore.add(action.chatId, action.text, ctx.from?.id ?? null);
+      await ctx.reply(`Записала інструкцію #${saved.id}.`, {
+        reply_to_message_id: action.replyTo,
+      });
+      return;
+    }
+    case "list_special_instructions": {
+      const all = deps.instructionStore.list(action.chatId);
+      const text =
+        all.length === 0
+          ? "У цьому чаті спеціальних інструкцій немає."
+          : all.map((i) => `#${i.id} · ${formatKyivDate(i.createdAt)}\n${i.text}`).join("\n\n");
+      await ctx.reply(truncateForTelegram(text), { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "remove_special_instruction": {
+      const removed = deps.instructionStore.remove(action.chatId, action.id);
+      const text = removed ? `Забула інструкцію #${action.id}.` : "Такої інструкції немає.";
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }

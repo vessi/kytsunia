@@ -98,6 +98,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     recentContextSize: 10,
     profilesLimit: 5,
     regularsStore,
+    instructionStore: { list: vi.fn(() => []), add: vi.fn(), remove: vi.fn() },
     rng: () => 0,
     log: silentLog,
     visionEnabled: true,
@@ -952,6 +953,32 @@ describe("invokeLlmReply: web search", () => {
 
     const system = llm.calls[0]?.system as Array<{ text: string }>;
     expect(system[0]?.text).toBe("PERSONA\n\nSEARCH RULES");
+  });
+
+  it("puts this chat's admin instructions into the persona block, before the search prompt", async () => {
+    const llm = makeSearchLlm();
+    const { ctx } = makeCtx({ text: "Кицюня, пошукай курс долара" });
+    const list = vi.fn((chatId: number) =>
+      chatId === 1
+        ? [
+            { id: 1, chatId, text: "Не згадуй котів.", createdAt: 0 },
+            { id: 4, chatId, text: "Перший рядок.\nДругий рядок.", createdAt: 0 },
+          ]
+        : [],
+    );
+    const deps = searchDeps({
+      llmClient: llm.client,
+      searchPrompt: "SEARCH RULES",
+      instructionStore: { list, add: vi.fn(), remove: vi.fn() },
+    });
+    await invokeLlmReply(ctx, 999, deps, SEARCH);
+
+    expect(list).toHaveBeenCalledWith(1);
+    const system = llm.calls[0]?.system as Array<{ text: string; cache_control?: unknown }>;
+    expect(system[0]?.text).toBe(
+      "PERSONA\n\nСпеціальні інструкції від адміна для цього чату. Якщо вони суперечать правилам вище — виконуй інструкції:\n- Не згадуй котів.\n- Перший рядок.\n  Другий рядок.\n\nSEARCH RULES",
+    );
+    expect(system[0]?.cache_control).toBeDefined();
   });
 
   it("puts the query into the message the model sees", async () => {

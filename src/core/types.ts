@@ -55,7 +55,12 @@ export type Action =
   // Явний пошук. query порожній, коли шукати треба за повідомленням чи фото, на яке відповіли.
   | { kind: "invoke_web_search"; replyTo: number; query: string }
   // Адмінський звіт про витрати на модель за останні days днів (включно з сьогодні).
-  | { kind: "report_usage"; replyTo: number; days: number };
+  | { kind: "report_usage"; replyTo: number; days: number }
+  // Адмінські спеціальні інструкції — довільний текст, який дописується до
+  // промпту моделі в цьому чаті.
+  | { kind: "add_special_instruction"; replyTo: number; chatId: number; text: string }
+  | { kind: "list_special_instructions"; replyTo: number; chatId: number }
+  | { kind: "remove_special_instruction"; replyTo: number; chatId: number; id: number };
 
 export type DynamicRuleSpec = {
   pattern: string;

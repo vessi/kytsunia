@@ -584,3 +584,119 @@ describe("fixedRules: usage_report", () => {
     expect(rule.pattern.test("Кицюня, звітність це нудно")).toBe(false);
   });
 });
+
+describe("fixedRules: special_instruction_add", () => {
+  const rule = findRule("special_instruction_add");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+
+  it("takes everything after the command, including line breaks", () => {
+    const text = "Кицюня, спеціальна інструкція\nНе згадуй котів.\nІ собак теж.";
+    const input = buildInput({ text });
+    const m = rule.pattern.exec(text);
+    expect(m).not.toBeNull();
+    if (!m) return;
+    expect(rule.produce(input, m, admin)).toEqual([
+      {
+        kind: "add_special_instruction",
+        replyTo: 100,
+        chatId: 200,
+        text: "Не згадуй котів.\nІ собак теж.",
+      },
+    ]);
+  });
+
+  it("accepts a colon or space after the command", () => {
+    for (const text of [
+      "Кицюня, спеціальна інструкція: сьогодні свято",
+      "Кицюня, спеціальна інструкція сьогодні свято",
+    ]) {
+      const m = rule.pattern.exec(text);
+      if (!m) throw new Error("no match");
+      expect(rule.produce(buildInput({ text }), m, admin)).toEqual([
+        { kind: "add_special_instruction", replyTo: 100, chatId: 200, text: "сьогодні свято" },
+      ]);
+    }
+  });
+
+  it("falls back to the replied-to message when no text is typed", () => {
+    const input = buildInput({
+      text: "Кицюня, спеціальна інструкція",
+      replyTo: { messageId: 5, authorId: 300, authorName: "Test", text: " Хвали Олю. " },
+    });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([
+      { kind: "add_special_instruction", replyTo: 100, chatId: 200, text: "Хвали Олю." },
+    ]);
+  });
+
+  it("asks for the text when there is none", () => {
+    const input = buildInput({ text: "Кицюня, спеціальна інструкція" });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([
+      { kind: "reply_text", text: "Яка інструкція?", replyTo: 100 },
+    ]);
+  });
+
+  it("is silently ignored for non-admins", () => {
+    const input = buildInput({ text: "Кицюня, спеціальна інструкція: щось", senderId: 301 });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([]);
+    expect(rule.produce(input, m, buildState())).toEqual([]);
+  });
+
+  it("does not match the plural list command", () => {
+    expect(rule.pattern.test("Кицюня, спеціальні інструкції")).toBe(false);
+  });
+});
+
+describe("fixedRules: special_instructions_list", () => {
+  const rule = findRule("special_instructions_list");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+
+  it("produces the list action for the admin", () => {
+    for (const text of ["Кицюня, спеціальні інструкції", "Кицюня, спеціальні інструкції?"]) {
+      const m = rule.pattern.exec(text);
+      if (!m) throw new Error("no match");
+      expect(rule.produce(buildInput({ text }), m, admin)).toEqual([
+        { kind: "list_special_instructions", replyTo: 100, chatId: 200 },
+      ]);
+    }
+  });
+
+  it("is silently ignored for non-admins", () => {
+    const input = buildInput({ text: "Кицюня, спеціальні інструкції", senderId: 301 });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([]);
+  });
+});
+
+describe("fixedRules: special_instruction_remove", () => {
+  const rule = findRule("special_instruction_remove");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+
+  it("parses the id, with or without #", () => {
+    for (const text of ["Кицюня, забудь інструкцію 12", "Кицюня, забудь інструкцію #12"]) {
+      const m = rule.pattern.exec(text);
+      if (!m) throw new Error("no match");
+      expect(rule.produce(buildInput({ text }), m, admin)).toEqual([
+        { kind: "remove_special_instruction", replyTo: 100, chatId: 200, id: 12 },
+      ]);
+    }
+  });
+
+  it("is silently ignored for non-admins", () => {
+    const input = buildInput({ text: "Кицюня, забудь інструкцію 12", senderId: 301 });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([]);
+  });
+
+  it("does not steal «забудь мене» or «забудь x.гіф»", () => {
+    expect(rule.pattern.test("Кицюня, забудь мене")).toBe(false);
+    expect(rule.pattern.test("Кицюня, забудь інструкцію.гіф")).toBe(false);
+  });
+});

@@ -196,6 +196,7 @@ describe("invokeDigest", () => {
       globalDailyCap: 150,
       log: silentLog,
       startTyping: vi.fn(() => vi.fn()),
+      instructionStore: { list: vi.fn(() => []), add: vi.fn(), remove: vi.fn() },
       ...overrides,
     };
   }
@@ -206,6 +207,30 @@ describe("invokeDigest", () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  it("appends this chat's admin instructions to the digest prompt", async () => {
+    const { ctx } = makeCtx();
+    const llm = makeFakeLlm();
+    seed(10);
+    const list = vi.fn((chatId: number) =>
+      chatId === 1 ? [{ id: 3, chatId, text: "Не згадуй Олю.", createdAt: 0 }] : [],
+    );
+    await invokeDigest(
+      ctx,
+      999,
+      undefined,
+      makeDeps({
+        llmClient: llm.client,
+        instructionStore: { list, add: vi.fn(), remove: vi.fn() },
+      }),
+    );
+
+    expect(list).toHaveBeenCalledWith(1);
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system[0]?.text).toBe(
+      "PROMPT\n\nСпеціальні інструкції від адміна для цього чату. Якщо вони суперечать правилам вище — виконуй інструкції:\n- Не згадуй Олю.",
+    );
   });
 
   it("refuses when the feature flag is off", async () => {

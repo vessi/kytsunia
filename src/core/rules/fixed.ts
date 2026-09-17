@@ -231,6 +231,48 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, спеціальна інструкція <текст>» — усе після команди йде в промпт
+    // моделі для цього чату як є, з переносами рядків. Без тексту — беремо
+    // повідомлення, на яке відповіли. Admin only, тиха ігнорація для інших.
+    name: "special_instruction_add",
+    pattern: /(К|к)ицюн(я|ю), спеціальна інструкція(?:[\s,:!?.]+([\s\S]*))?$/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const typed = match[3]?.trim() ?? "";
+      const text = typed || input.replyTo?.text?.trim() || "";
+      if (!text) {
+        return [{ kind: "reply_text", text: "Яка інструкція?", replyTo: input.messageId }];
+      }
+      return [
+        { kind: "add_special_instruction", replyTo: input.messageId, chatId: input.chatId, text },
+      ];
+    },
+  },
+  {
+    // «Кицюня, спеціальні інструкції» — список цього чату з id і датами.
+    name: "special_instructions_list",
+    pattern: /(К|к)ицюн(я|ю), спеціальні інструкції(?:[!?.\s,]|$)/,
+    produce: (input, _match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      return [
+        { kind: "list_special_instructions", replyTo: input.messageId, chatId: input.chatId },
+      ];
+    },
+  },
+  {
+    // «Кицюня, забудь інструкцію 3» (можна з #) — id зі списку.
+    name: "special_instruction_remove",
+    pattern: /(К|к)ицюн(я|ю), забудь інструкцію\s+#?(\d+)/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const id = Number.parseInt(match[3] ?? "", 10);
+      if (Number.isNaN(id)) return [];
+      return [
+        { kind: "remove_special_instruction", replyTo: input.messageId, chatId: input.chatId, id },
+      ];
+    },
+  },
+  {
     name: "rate_status",
     pattern: /(К|к)ицюн(я|ю), скільки в мене лишилось\??/,
     produce: (input) => [

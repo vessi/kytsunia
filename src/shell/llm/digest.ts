@@ -1,11 +1,13 @@
 import type { Context } from "grammy";
 import type { Logger } from "../logger.js";
 import type { Db } from "../storage/db.js";
+import type { InstructionStore } from "../storage/instructions.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
 import { getRecentMessages, type RecentMessageRow } from "../storage/messages.js";
 import { formatKyivDate, formatKyivTime } from "../time.js";
 import type { TypingStarter } from "../typing.js";
 import type { LlmClient, SystemBlock } from "./anthropic.js";
+import { withSpecialInstructions } from "./persona.js";
 import { calculateCost } from "./pricing.js";
 
 // Дайджест довший за звичайний реплай: 3-7 пунктів + репліка від себе.
@@ -34,6 +36,8 @@ export type InvokeDigestDeps = {
   log: Logger;
   // Поновлює «друкує…», поки модель пише дайджест.
   startTyping: TypingStarter;
+  // Спеціальні інструкції адміна для чату, дописуються до промпту дайджесту.
+  instructionStore: InstructionStore;
 };
 
 /**
@@ -162,7 +166,11 @@ export async function invokeDigest(
     return;
   }
 
-  const { system, userMessage } = buildDigestRequest(rows, deps.prompt);
+  const prompt = withSpecialInstructions(
+    deps.prompt,
+    deps.instructionStore.list(chatId).map((i) => i.text),
+  );
+  const { system, userMessage } = buildDigestRequest(rows, prompt);
   const stopTyping = deps.startTyping(ctx);
 
   try {

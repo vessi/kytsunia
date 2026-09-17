@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import type { Logger } from "../logger.js";
 import type { Db } from "../storage/db.js";
+import type { InstructionStore } from "../storage/instructions.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
 import {
   getRecentMessages,
@@ -11,6 +12,7 @@ import type { RegularsStore } from "../storage/regulars.js";
 import type { TypingStarter } from "../typing.js";
 import { type LlmClient, type ReplySource, webSearchTool } from "./anthropic.js";
 import { buildLlmRequest, type RecentMessage } from "./context.js";
+import { withSpecialInstructions } from "./persona.js";
 import { calculateCost } from "./pricing.js";
 import { collectProfiles } from "./profiles.js";
 import type { FetchedPhoto, PhotoFetcher } from "./telegram-photos.js";
@@ -27,6 +29,8 @@ export type InvokeLlmDeps = {
   recentContextSize: number;
   profilesLimit: number;
   regularsStore: RegularsStore;
+  // Спеціальні інструкції адміна для чату, дописуються до персони.
+  instructionStore: InstructionStore;
   rng: () => number;
   log: Logger;
   // Vision
@@ -396,9 +400,13 @@ export async function invokeLlmReply(
       photos: [],
     }));
 
-    // Інструкції пошуку дописуємо в кінець персони, а не окремим блоком: так вони
-    // потрапляють у той самий кешований префікс.
-    const persona = search ? `${deps.persona}\n\n${deps.searchPrompt}` : deps.persona;
+    // Інструкції адміна й пошуку дописуємо в кінець персони, а не окремим
+    // блоком: так вони потрапляють у той самий кешований префікс.
+    const base = withSpecialInstructions(
+      deps.persona,
+      deps.instructionStore.list(chatId).map((i) => i.text),
+    );
+    const persona = search ? `${base}\n\n${deps.searchPrompt}` : base;
     const { system, userMessage } = buildLlmRequest(
       { senderName: userName, text, photos: currentPhotos },
       recent,
