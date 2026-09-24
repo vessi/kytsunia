@@ -9,6 +9,7 @@ import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
 import { buildPersonaPrompt, DIGEST_PROMPT, SEARCH_PROMPT } from "./shell/llm/persona.js";
 import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
+import { makeChatSettingsStore } from "./shell/storage/chat-settings.js";
 import { openDb } from "./shell/storage/db.js";
 import { makeInstructionStore } from "./shell/storage/instructions.js";
 import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
@@ -30,6 +31,7 @@ const llmCallStore = makeLlmCallStore(db);
 const regularsStore = makeRegularsStore(db);
 const optOutsStore = makeOptOutsStore(db);
 const instructionStore = makeInstructionStore(db);
+const chatSettings = makeChatSettingsStore(db);
 log.info({ dbPath: config.DB_PATH }, "database opened");
 log.info({ count: regularsStore.list().length }, "regulars loaded");
 log.info({ count: optOutsStore.list().length }, "profile opt-outs loaded");
@@ -69,20 +71,31 @@ const botUserId = bot.botInfo.id;
 const botName = bot.botInfo.first_name ?? "Кицюня";
 log.info({ username: bot.botInfo.username, id: botUserId }, "bot info loaded");
 
-const persona = buildPersonaPrompt({
-  model: config.LLM_MODEL,
-  digestModel: config.KYTSUNIA_DIGEST_MODEL,
-  visionEnabled: config.KYTSUNIA_VISION_ENABLED,
-  digestEnabled: config.KYTSUNIA_DIGEST_ENABLED,
-  searchEnabled: config.KYTSUNIA_SEARCH_ENABLED,
-});
+// Персона під кожну модель окремо: чат може перемкнути модель командою, а
+// персона чесно називає, на чому працює. Кешуємо, бо текст стабільний.
+const personaCache = new Map<string, string>();
+const personaFor = (model: string): string => {
+  let persona = personaCache.get(model);
+  if (persona === undefined) {
+    persona = buildPersonaPrompt({
+      model,
+      digestModel: config.KYTSUNIA_DIGEST_MODEL,
+      visionEnabled: config.KYTSUNIA_VISION_ENABLED,
+      digestEnabled: config.KYTSUNIA_DIGEST_ENABLED,
+      searchEnabled: config.KYTSUNIA_SEARCH_ENABLED,
+    });
+    personaCache.set(model, persona);
+  }
+  return persona;
+};
 
 const invokeLlmDeps: InvokeLlmDeps = {
   llmClient,
   llmCallStore,
   db,
   model: config.LLM_MODEL,
-  persona,
+  chatSettings,
+  persona: personaFor,
   defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
   globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
   recentContextSize: 10,
@@ -183,6 +196,8 @@ bot.on("message", async (ctx) => {
         optOutsStore,
         regularsStore,
         instructionStore,
+        chatSettings,
+        defaultModel: config.LLM_MODEL,
       });
     } catch (err) {
       log.error({ err: err instanceof Error ? err.message : err }, "action execution failed");

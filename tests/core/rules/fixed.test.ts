@@ -700,3 +700,48 @@ describe("fixedRules: special_instruction_remove", () => {
     expect(rule.pattern.test("Кицюня, забудь інструкцію.гіф")).toBe(false);
   });
 });
+
+describe("fixedRules: chat_model", () => {
+  const rule = findRule("chat_model");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+  const base = { replyTo: 100, chatId: 200 };
+
+  function run(text: string, state = admin) {
+    const m = rule.pattern.exec(text);
+    if (!m) throw new Error(`no match: ${text}`);
+    return rule.produce(buildInput({ text }), m, state);
+  }
+
+  it("shows the current model without an argument", () => {
+    for (const text of ["Кицюня, модель", "Кицюня, модель?", "кицюню, модель!"]) {
+      expect(run(text)).toEqual([{ kind: "show_chat_model", ...base }]);
+    }
+  });
+
+  it("passes the requested model through as typed", () => {
+    expect(run("Кицюня, модель opus")).toEqual([
+      { kind: "set_chat_model", ...base, model: "opus" },
+    ]);
+    expect(run("Кицюня, модель: claude-sonnet-5.")).toEqual([
+      { kind: "set_chat_model", ...base, model: "claude-sonnet-5" },
+    ]);
+  });
+
+  it("resets on «скинь» and «за замовчуванням»", () => {
+    for (const text of ["Кицюня, модель скинь", "Кицюня, модель за замовчуванням"]) {
+      expect(run(text)).toEqual([{ kind: "reset_chat_model", ...base }]);
+    }
+  });
+
+  it("is silently ignored for non-admins", () => {
+    const input = buildInput({ text: "Кицюня, модель opus", senderId: 301 });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([]);
+    expect(rule.produce(input, m, buildState())).toEqual([]);
+  });
+
+  it("does not match words that merely start with модель", () => {
+    expect(rule.pattern.test("Кицюня, модельєр це професія")).toBe(false);
+  });
+});

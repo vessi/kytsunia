@@ -15,6 +15,18 @@ const PRICING: Record<string, Pricing> = {
     cacheRead: 0.1,
     cacheWrite: 1.25,
   },
+  "claude-haiku-4-5": {
+    input: 1.0,
+    output: 5.0,
+    cacheRead: 0.1,
+    cacheWrite: 1.25,
+  },
+  "claude-opus-5": {
+    input: 5.0,
+    output: 25.0,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
+  },
   "claude-sonnet-4-6": {
     input: 3.0,
     output: 15.0,
@@ -29,6 +41,9 @@ const PRICING: Record<string, Pricing> = {
     cacheWrite: 2.5,
   },
 };
+
+// Моделі, які можна вибрати для чату командою «Кицюня, модель».
+export const KNOWN_MODELS: readonly string[] = Object.keys(PRICING);
 
 export type Usage = {
   inputTokens: number;

@@ -273,6 +273,24 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, модель» — яка модель у цьому чаті; «Кицюня, модель opus» —
+    // перемкнути; «Кицюня, модель скинь» — повернути дефолт. Admin only.
+    // Після «модель» має бути кінець, розділовий знак або пробіл, щоб не
+    // ловити «модельєр».
+    name: "chat_model",
+    pattern: /(К|к)ицюн(я|ю), модель(?:\s*[!?.]*$|[\s:]+(.+?)[\s!?.]*$)/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const arg = match[3]?.trim() ?? "";
+      const base = { replyTo: input.messageId, chatId: input.chatId };
+      if (!arg) return [{ kind: "show_chat_model", ...base }];
+      if (/^(скинь|скинути|дефолт|за замовчуванням)$/i.test(arg)) {
+        return [{ kind: "reset_chat_model", ...base }];
+      }
+      return [{ kind: "set_chat_model", ...base, model: arg }];
+    },
+  },
+  {
     name: "rate_status",
     pattern: /(К|к)ицюн(я|ю), скільки в мене лишилось\??/,
     produce: (input) => [

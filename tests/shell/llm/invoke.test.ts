@@ -92,7 +92,8 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     llmCallStore,
     db,
     model: "test",
-    persona: "P",
+    chatSettings: { getModel: vi.fn(() => null), setModel: vi.fn(), clearModel: vi.fn() },
+    persona: () => "P",
     defaultDailyLimit: 100,
     globalDailyCap: 1000,
     recentContextSize: 10,
@@ -893,7 +894,7 @@ describe("invokeLlmReply: web search", () => {
   });
 
   function searchDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
-    const deps = makeBaseDeps({ model: "claude-sonnet-5", persona: "PERSONA", ...overrides });
+    const deps = makeBaseDeps({ model: "claude-sonnet-5", persona: () => "PERSONA", ...overrides });
     opened.push(deps);
     return deps;
   }
@@ -1128,6 +1129,69 @@ describe("invokeLlmReply: web search", () => {
     await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client }));
 
     expect(String(reply.mock.calls[0]?.[0]).trim()).not.toBe("");
+  });
+});
+
+describe("invokeLlmReply: per-chat model", () => {
+  const opened: InvokeLlmDeps[] = [];
+
+  afterEach(() => {
+    for (const d of opened.splice(0)) d.db.close();
+  });
+
+  function deps(overrides: Partial<InvokeLlmDeps>): InvokeLlmDeps {
+    const d = makeBaseDeps(overrides);
+    opened.push(d);
+    return d;
+  }
+
+  function makeLlm() {
+    const calls: Array<{ system: SystemContent; model: string }> = [];
+    const client: LlmClient = {
+      reply: async (system, _content, model) => {
+        calls.push({ system, model });
+        return {
+          text: "ок",
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        };
+      },
+    };
+    return { client, calls };
+  }
+
+  it("uses the chat override for the call, the record and the persona", async () => {
+    const llm = makeLlm();
+    const persona = vi.fn((model: string) => `P:${model}`);
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    const d = deps({
+      llmClient: llm.client,
+      model: "claude-sonnet-5",
+      persona,
+      chatSettings: {
+        getModel: vi.fn((chatId: number) => (chatId === 1 ? "claude-opus-5" : null)),
+        setModel: vi.fn(),
+        clearModel: vi.fn(),
+      },
+    });
+    await invokeLlmReply(ctx, 999, d);
+
+    expect(llm.calls[0]?.model).toBe("claude-opus-5");
+    expect(persona).toHaveBeenCalledWith("claude-opus-5");
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system[0]?.text).toBe("P:claude-opus-5");
+    expect(d.llmCallStore.record).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "claude-opus-5", status: "ok" }),
+    );
+  });
+
+  it("falls back to the default model without an override", async () => {
+    const llm = makeLlm();
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    await invokeLlmReply(ctx, 999, deps({ llmClient: llm.client, model: "claude-sonnet-5" }));
+    expect(llm.calls[0]?.model).toBe("claude-sonnet-5");
   });
 });
 

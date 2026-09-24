@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import type { Logger } from "../logger.js";
+import type { ChatSettingsStore } from "../storage/chat-settings.js";
 import type { Db } from "../storage/db.js";
 import type { InstructionStore } from "../storage/instructions.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
@@ -22,8 +23,12 @@ export type InvokeLlmDeps = {
   llmClient: LlmClient;
   llmCallStore: LlmCallStore;
   db: Db;
+  // Модель за замовчуванням; чат може перевизначити її через chatSettings.
   model: string;
-  persona: string;
+  chatSettings: ChatSettingsStore;
+  // Персона залежить від моделі (вона чесно називає, на чому працює), тому
+  // будується під модель, а не один раз.
+  persona: (model: string) => string;
   defaultDailyLimit: number;
   globalDailyCap: number;
   recentContextSize: number;
@@ -259,6 +264,7 @@ export async function invokeLlmReply(
   const chatId = ctx.chat?.id ?? 0;
   const userId = ctx.from?.id ?? 0;
   const userName = ctx.from?.first_name ?? "";
+  const model = deps.chatSettings.getModel(chatId) ?? deps.model;
   const search = options.search;
   // При пошуку у відповідь на повідомлення сам тригер — просто «Кицюня, пошукай»,
   // а що шукати, лежить у query. Тому текст для моделі складаємо явно.
@@ -279,7 +285,7 @@ export async function invokeLlmReply(
     userId,
     userName,
     triggerMsgId: replyTo,
-    model: deps.model,
+    model,
     weight,
   };
 
@@ -403,7 +409,7 @@ export async function invokeLlmReply(
     // Інструкції адміна й пошуку дописуємо в кінець персони, а не окремим
     // блоком: так вони потрапляють у той самий кешований префікс.
     const base = withSpecialInstructions(
-      deps.persona,
+      deps.persona(model),
       deps.instructionStore.list(chatId).map((i) => i.text),
     );
     const persona = search ? `${base}\n\n${deps.searchPrompt}` : base;
@@ -418,11 +424,11 @@ export async function invokeLlmReply(
 
     try {
       const reply = search
-        ? await deps.llmClient.reply(system, userMessage, deps.model, SEARCH_MAX_TOKENS, {
+        ? await deps.llmClient.reply(system, userMessage, model, SEARCH_MAX_TOKENS, {
             tools: [webSearchTool(deps.searchMaxUses)],
           })
-        : await deps.llmClient.reply(system, userMessage, deps.model);
-      const cost = calculateCost(deps.model, {
+        : await deps.llmClient.reply(system, userMessage, model);
+      const cost = calculateCost(model, {
         inputTokens: reply.inputTokens,
         outputTokens: reply.outputTokens,
         cacheReadTokens: reply.cacheReadTokens,

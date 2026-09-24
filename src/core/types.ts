@@ -60,7 +60,12 @@ export type Action =
   // промпту моделі в цьому чаті.
   | { kind: "add_special_instruction"; replyTo: number; chatId: number; text: string }
   | { kind: "list_special_instructions"; replyTo: number; chatId: number }
-  | { kind: "remove_special_instruction"; replyTo: number; chatId: number; id: number };
+  | { kind: "remove_special_instruction"; replyTo: number; chatId: number; id: number }
+  // Адмінський вибір моделі для чату. model — як написав адмін («opus» чи повний
+  // id): розбирає й перевіряє shell, бо список моделей живе там.
+  | { kind: "show_chat_model"; replyTo: number; chatId: number }
+  | { kind: "set_chat_model"; replyTo: number; chatId: number; model: string }
+  | { kind: "reset_chat_model"; replyTo: number; chatId: number };
 
 export type DynamicRuleSpec = {
   pattern: string;

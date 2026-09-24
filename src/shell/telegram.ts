@@ -4,6 +4,8 @@ import type { InvokeDigestDeps } from "./llm/digest.js";
 import { invokeDigest, truncateForTelegram } from "./llm/digest.js";
 import type { InvokeLlmDeps } from "./llm/invoke.js";
 import { invokeLlmReply } from "./llm/invoke.js";
+import { modelChoicesHelp, resolveModel } from "./llm/models.js";
+import type { ChatSettingsStore } from "./storage/chat-settings.js";
 import type { InstructionStore } from "./storage/instructions.js";
 import type { LlmCallStore } from "./storage/llm-calls.js";
 import type { OptOutsStore } from "./storage/opt-outs.js";
@@ -23,6 +25,8 @@ export type ExecuteDeps = {
   optOutsStore: OptOutsStore;
   regularsStore: RegularsStore;
   instructionStore: InstructionStore;
+  chatSettings: ChatSettingsStore;
+  defaultModel: string;
 };
 
 export function toMessageInput(ctx: Context): MessageInput | null {
@@ -192,6 +196,36 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
     case "remove_special_instruction": {
       const removed = deps.instructionStore.remove(action.chatId, action.id);
       const text = removed ? `Забула інструкцію #${action.id}.` : "Такої інструкції немає.";
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "show_chat_model": {
+      const override = deps.chatSettings.getModel(action.chatId);
+      const text = override
+        ? `Модель у цьому чаті: ${override}. За замовчуванням була б ${deps.defaultModel}.`
+        : `Модель у цьому чаті: ${deps.defaultModel} (за замовчуванням).`;
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "set_chat_model": {
+      const model = resolveModel(action.model);
+      if (!model) {
+        await ctx.reply(`Не знаю такої моделі. ${modelChoicesHelp()}`, {
+          reply_to_message_id: action.replyTo,
+        });
+        return;
+      }
+      deps.chatSettings.setModel(action.chatId, model, ctx.from?.id ?? null);
+      await ctx.reply(`Тепер у цьому чаті відповідаю через ${model}.`, {
+        reply_to_message_id: action.replyTo,
+      });
+      return;
+    }
+    case "reset_chat_model": {
+      const had = deps.chatSettings.clearModel(action.chatId);
+      const text = had
+        ? `Повернула модель за замовчуванням: ${deps.defaultModel}.`
+        : `Тут і так модель за замовчуванням: ${deps.defaultModel}.`;
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }
