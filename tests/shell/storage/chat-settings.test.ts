@@ -31,6 +31,20 @@ describe("chatSettingsStore", () => {
     expect(store.getModel(2)).toBe("claude-haiku-4-5");
   });
 
+  it("keeps persona and model independent", () => {
+    store.setModel(1, "claude-opus-5");
+    store.setPersona(1, "Ти сумна сова.", 7);
+    expect(store.getPersona(1)).toBe("Ти сумна сова.");
+    expect(store.getModel(1)).toBe("claude-opus-5");
+
+    expect(store.clearModel(1)).toBe(true);
+    expect(store.getPersona(1)).toBe("Ти сумна сова.");
+    expect(store.clearPersona(1)).toBe(true);
+    expect(store.clearPersona(1)).toBe(false);
+    expect(store.getPersona(1)).toBeNull();
+    expect(store.getPersona(2)).toBeNull();
+  });
+
   it("clears and reports whether there was an override", () => {
     store.setModel(1, "claude-opus-5");
     expect(store.clearModel(1)).toBe(true);

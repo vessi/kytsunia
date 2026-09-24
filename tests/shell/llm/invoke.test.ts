@@ -92,7 +92,14 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     llmCallStore,
     db,
     model: "test",
-    chatSettings: { getModel: vi.fn(() => null), setModel: vi.fn(), clearModel: vi.fn() },
+    chatSettings: {
+      getModel: vi.fn(() => null),
+      setModel: vi.fn(),
+      clearModel: vi.fn(),
+      getPersona: vi.fn(() => null),
+      setPersona: vi.fn(),
+      clearPersona: vi.fn(),
+    },
     persona: () => "P",
     defaultDailyLimit: 100,
     globalDailyCap: 1000,
@@ -1174,17 +1181,44 @@ describe("invokeLlmReply: per-chat model", () => {
         getModel: vi.fn((chatId: number) => (chatId === 1 ? "claude-opus-5" : null)),
         setModel: vi.fn(),
         clearModel: vi.fn(),
+        getPersona: vi.fn(() => null),
+        setPersona: vi.fn(),
+        clearPersona: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, d);
 
     expect(llm.calls[0]?.model).toBe("claude-opus-5");
-    expect(persona).toHaveBeenCalledWith("claude-opus-5");
+    expect(persona).toHaveBeenCalledWith("claude-opus-5", null);
     const system = llm.calls[0]?.system as Array<{ text: string }>;
     expect(system[0]?.text).toBe("P:claude-opus-5");
     expect(d.llmCallStore.record).toHaveBeenCalledWith(
       expect.objectContaining({ model: "claude-opus-5", status: "ok" }),
     );
+  });
+
+  it("hands the chat's persona override to the persona builder", async () => {
+    const llm = makeLlm();
+    const persona = vi.fn((model: string, character: string | null) => `${model}|${character}`);
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    const d = deps({
+      llmClient: llm.client,
+      model: "claude-sonnet-5",
+      persona,
+      chatSettings: {
+        getModel: vi.fn(() => null),
+        setModel: vi.fn(),
+        clearModel: vi.fn(),
+        getPersona: vi.fn((chatId: number) => (chatId === 1 ? "Ти сумна сова." : null)),
+        setPersona: vi.fn(),
+        clearPersona: vi.fn(),
+      },
+    });
+    await invokeLlmReply(ctx, 999, d);
+
+    expect(persona).toHaveBeenCalledWith("claude-sonnet-5", "Ти сумна сова.");
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system[0]?.text).toBe("claude-sonnet-5|Ти сумна сова.");
   });
 
   it("falls back to the default model without an override", async () => {

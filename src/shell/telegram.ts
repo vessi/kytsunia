@@ -5,6 +5,7 @@ import { invokeDigest, truncateForTelegram } from "./llm/digest.js";
 import type { InvokeLlmDeps } from "./llm/invoke.js";
 import { invokeLlmReply } from "./llm/invoke.js";
 import { modelChoicesHelp, resolveModel } from "./llm/models.js";
+import { PERSONA_PROMPT } from "./llm/persona.js";
 import type { ChatSettingsStore } from "./storage/chat-settings.js";
 import type { InstructionStore } from "./storage/instructions.js";
 import type { LlmCallStore } from "./storage/llm-calls.js";
@@ -226,6 +227,27 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       const text = had
         ? `Повернула модель за замовчуванням: ${deps.defaultModel}.`
         : `Тут і так модель за замовчуванням: ${deps.defaultModel}.`;
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "show_chat_persona": {
+      const override = deps.chatSettings.getPersona(action.chatId);
+      const text = override
+        ? `Персона цього чату (задана адміном):\n\n${override}`
+        : `Персона за замовчуванням (з коду):\n\n${PERSONA_PROMPT}`;
+      await ctx.reply(truncateForTelegram(text), { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "set_chat_persona": {
+      deps.chatSettings.setPersona(action.chatId, action.text, ctx.from?.id ?? null);
+      await ctx.reply("Записала. Тепер у цьому чаті я така.", {
+        reply_to_message_id: action.replyTo,
+      });
+      return;
+    }
+    case "reset_chat_persona": {
+      const had = deps.chatSettings.clearPersona(action.chatId);
+      const text = had ? "Повернула персону з коду." : "Тут і так персона з коду.";
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }

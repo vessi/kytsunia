@@ -71,20 +71,23 @@ const botUserId = bot.botInfo.id;
 const botName = bot.botInfo.first_name ?? "Кицюня";
 log.info({ username: bot.botInfo.username, id: botUserId }, "bot info loaded");
 
-// Персона під кожну модель окремо: чат може перемкнути модель командою, а
-// персона чесно називає, на чому працює. Кешуємо, бо текст стабільний.
+// Персона під модель і характер чату: чат може перемкнути модель або замінити
+// характер командою, а технічна частина промпту від цього не залежить.
+// Кешуємо за парою, бо текст стабільний, а будується на кожен виклик.
 const personaCache = new Map<string, string>();
-const personaFor = (model: string): string => {
-  let persona = personaCache.get(model);
+const personaFor = (model: string, character: string | null): string => {
+  const key = `${model}\u0000${character ?? ""}`;
+  let persona = personaCache.get(key);
   if (persona === undefined) {
     persona = buildPersonaPrompt({
       model,
+      ...(character !== null ? { character } : {}),
       digestModel: config.KYTSUNIA_DIGEST_MODEL,
       visionEnabled: config.KYTSUNIA_VISION_ENABLED,
       digestEnabled: config.KYTSUNIA_DIGEST_ENABLED,
       searchEnabled: config.KYTSUNIA_SEARCH_ENABLED,
     });
-    personaCache.set(model, persona);
+    personaCache.set(key, persona);
   }
   return persona;
 };

@@ -65,7 +65,11 @@ export type Action =
   // id): розбирає й перевіряє shell, бо список моделей живе там.
   | { kind: "show_chat_model"; replyTo: number; chatId: number }
   | { kind: "set_chat_model"; replyTo: number; chatId: number; model: string }
-  | { kind: "reset_chat_model"; replyTo: number; chatId: number };
+  | { kind: "reset_chat_model"; replyTo: number; chatId: number }
+  // Адмінська персона для чату: текст характеру замість зашитого в коді.
+  | { kind: "show_chat_persona"; replyTo: number; chatId: number }
+  | { kind: "set_chat_persona"; replyTo: number; chatId: number; text: string }
+  | { kind: "reset_chat_persona"; replyTo: number; chatId: number };
 
 export type DynamicRuleSpec = {
   pattern: string;

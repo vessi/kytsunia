@@ -745,3 +745,52 @@ describe("fixedRules: chat_model", () => {
     expect(rule.pattern.test("Кицюня, модельєр це професія")).toBe(false);
   });
 });
+
+describe("fixedRules: chat_persona", () => {
+  const rule = findRule("chat_persona");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+  const base = { replyTo: 100, chatId: 200 };
+
+  function run(input: Partial<MessageInput>, state = admin) {
+    const full = buildInput(input);
+    const m = rule.pattern.exec(full.text);
+    if (!m) throw new Error(`no match: ${full.text}`);
+    return rule.produce(full, m, state);
+  }
+
+  it("shows the current persona without text or reply", () => {
+    for (const text of ["Кицюня, персона", "Кицюня, персона?"]) {
+      expect(run({ text })).toEqual([{ kind: "show_chat_persona", ...base }]);
+    }
+  });
+
+  it("sets the persona from the typed text, keeping line breaks", () => {
+    const text = "Кицюня, персона:\nТи сумна сова.\nВідповідаєш коротко.";
+    expect(run({ text })).toEqual([
+      { kind: "set_chat_persona", ...base, text: "Ти сумна сова.\nВідповідаєш коротко." },
+    ]);
+  });
+
+  it("sets the persona from the replied-to message when nothing is typed", () => {
+    expect(
+      run({
+        text: "Кицюня, персона",
+        replyTo: { messageId: 5, authorId: 300, authorName: "Test", text: " Ти сумна сова. " },
+      }),
+    ).toEqual([{ kind: "set_chat_persona", ...base, text: "Ти сумна сова." }]);
+  });
+
+  it("resets on «скинь»", () => {
+    for (const text of ["Кицюня, персона скинь", "Кицюня, персона за замовчуванням!"]) {
+      expect(run({ text })).toEqual([{ kind: "reset_chat_persona", ...base }]);
+    }
+  });
+
+  it("is silently ignored for non-admins", () => {
+    expect(run({ text: "Кицюня, персона скинь", senderId: 301 })).toEqual([]);
+  });
+
+  it("does not match words that merely start with персона", () => {
+    expect(rule.pattern.test("Кицюня, персональні дані це серйозно")).toBe(false);
+  });
+});

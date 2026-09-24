@@ -26,9 +26,9 @@ export type InvokeLlmDeps = {
   // Модель за замовчуванням; чат може перевизначити її через chatSettings.
   model: string;
   chatSettings: ChatSettingsStore;
-  // Персона залежить від моделі (вона чесно називає, на чому працює), тому
-  // будується під модель, а не один раз.
-  persona: (model: string) => string;
+  // Персона залежить від моделі (вона чесно називає, на чому працює) і від
+  // чату (адмін може замінити характер), тому будується на кожен виклик.
+  persona: (model: string, character: string | null) => string;
   defaultDailyLimit: number;
   globalDailyCap: number;
   recentContextSize: number;
@@ -409,7 +409,7 @@ export async function invokeLlmReply(
     // Інструкції адміна й пошуку дописуємо в кінець персони, а не окремим
     // блоком: так вони потрапляють у той самий кешований префікс.
     const base = withSpecialInstructions(
-      deps.persona(model),
+      deps.persona(model, deps.chatSettings.getPersona(chatId)),
       deps.instructionStore.list(chatId).map((i) => i.text),
     );
     const persona = search ? `${base}\n\n${deps.searchPrompt}` : base;

@@ -66,6 +66,9 @@ export type PersonaOptions = {
   visionEnabled: boolean;
   digestEnabled: boolean;
   searchEnabled: boolean;
+  // Текст характеру замість PERSONA_PROMPT — персона, задана адміном для чату.
+  // Технічна частина (модель, вміння) дописується до нього так само.
+  character?: string;
 };
 
 /**
@@ -128,7 +131,7 @@ export function buildPersonaPrompt(opts: PersonaOptions): string {
     "- Команди спрацьовують автоматично, ще до того, як текст доходить до тебе. Якщо питають, як щось зробити — підкажи команду. Не обіцяй зробити те, чого без команди не вмієш: не надсилаєш гіфок з власної волі, не шукаєш без «пошукай», не ставиш нагадувань, не пишеш в інші чати.",
   );
 
-  return `${PERSONA_PROMPT}
+  return `${opts.character ?? PERSONA_PROMPT}
 
 Хто ти технічно:
 ${identity.join("\n")}

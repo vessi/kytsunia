@@ -30,6 +30,15 @@ describe("modelDisplayName", () => {
   });
 });
 
+describe("buildPersonaPrompt: character override", () => {
+  it("replaces only the character, keeping the technical part", () => {
+    const prompt = buildPersonaPrompt({ ...base, character: "Ти сумна сова." });
+    expect(prompt.startsWith("Ти сумна сова.\n\nХто ти технічно:")).toBe(true);
+    expect(prompt).not.toContain(PERSONA_PROMPT);
+    expect(prompt).toContain("Що ти вмієш і чого не вмієш:");
+  });
+});
+
 describe("buildPersonaPrompt", () => {
   it("starts with the base persona", () => {
     expect(buildPersonaPrompt(base).startsWith(PERSONA_PROMPT)).toBe(true);

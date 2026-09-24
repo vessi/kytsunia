@@ -291,6 +291,24 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, персона» — показати поточну; «Кицюня, персона <текст>» або
+    // «Кицюня, персона» у відповідь на повідомлення з текстом — замінити;
+    // «Кицюня, персона скинь» — повернути ту, що в коді. Admin only.
+    name: "chat_persona",
+    pattern: /(К|к)ицюн(я|ю), персона(?:\s*[!?.]*$|[\s:,]+([\s\S]+?)\s*$)/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const base = { replyTo: input.messageId, chatId: input.chatId };
+      const typed = match[3]?.trim() ?? "";
+      if (/^(скинь|скинути|дефолт|за замовчуванням)[!?.]*$/i.test(typed)) {
+        return [{ kind: "reset_chat_persona", ...base }];
+      }
+      const text = typed || input.replyTo?.text?.trim() || "";
+      if (!text) return [{ kind: "show_chat_persona", ...base }];
+      return [{ kind: "set_chat_persona", ...base, text }];
+    },
+  },
+  {
     name: "rate_status",
     pattern: /(К|к)ицюн(я|ю), скільки в мене лишилось\??/,
     produce: (input) => [
