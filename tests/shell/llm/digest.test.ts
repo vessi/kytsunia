@@ -197,6 +197,17 @@ describe("invokeDigest", () => {
       log: silentLog,
       startTyping: vi.fn(() => vi.fn()),
       instructionStore: { list: vi.fn(() => []), add: vi.fn(), remove: vi.fn() },
+      chatSettings: {
+        getModel: vi.fn(() => null),
+        setModel: vi.fn(),
+        clearModel: vi.fn(),
+        getPersona: vi.fn(() => null),
+        setPersona: vi.fn(),
+        clearPersona: vi.fn(),
+        getDigestMaxCount: vi.fn(() => null),
+        setDigestMaxCount: vi.fn(),
+        clearDigestMaxCount: vi.fn(),
+      },
       ...overrides,
     };
   }
@@ -231,6 +242,38 @@ describe("invokeDigest", () => {
     expect(system[0]?.text).toBe(
       "PROMPT\n\nСпеціальні інструкції від адміна для цього чату. Якщо вони суперечать правилам вище — виконуй інструкції:\n- Не згадуй Олю.",
     );
+  });
+
+  it("caps the requested count by the chat's own ceiling", async () => {
+    const { ctx } = makeCtx();
+    const llm = makeFakeLlm();
+    seed(30);
+    const deps = makeDeps({ llmClient: llm.client, defaultCount: 300, maxCount: 500 });
+    (deps.chatSettings.getDigestMaxCount as ReturnType<typeof vi.fn>).mockReturnValue(10);
+    await invokeDigest(ctx, 999, 25, deps);
+
+    expect(deps.chatSettings.getDigestMaxCount).toHaveBeenCalledWith(1);
+    expect(llm.calls[0]?.content).toContain("останні 10 повідомлень");
+  });
+
+  it("caps the default count by the chat's ceiling too", async () => {
+    const { ctx } = makeCtx();
+    const llm = makeFakeLlm();
+    seed(30);
+    const deps = makeDeps({ llmClient: llm.client, defaultCount: 300, maxCount: 500 });
+    (deps.chatSettings.getDigestMaxCount as ReturnType<typeof vi.fn>).mockReturnValue(12);
+    await invokeDigest(ctx, 999, undefined, deps);
+    expect(llm.calls[0]?.content).toContain("останні 12 повідомлень");
+  });
+
+  it("never lets a chat ceiling exceed the global max", async () => {
+    const { ctx } = makeCtx();
+    const llm = makeFakeLlm();
+    seed(30);
+    const deps = makeDeps({ llmClient: llm.client, defaultCount: 300, maxCount: 15 });
+    (deps.chatSettings.getDigestMaxCount as ReturnType<typeof vi.fn>).mockReturnValue(1000);
+    await invokeDigest(ctx, 999, 25, deps);
+    expect(llm.calls[0]?.content).toContain("останні 15 повідомлень");
   });
 
   it("refuses when the feature flag is off", async () => {

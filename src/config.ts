@@ -53,6 +53,7 @@ const envSchema = z.object({
   // Скільки повідомлень брати, коли число не назвали явно.
   KYTSUNIA_DIGEST_DEFAULT_COUNT: envValue(z.coerce.number().int().positive().default(300)),
   // Стеля на явно назване число. 500 повідомлень ≈ 20k вхідних токенів.
+  // Чат може задати нижчу командою «Кицюня, ліміт дайджесту».
   KYTSUNIA_DIGEST_MAX_COUNT: envValue(z.coerce.number().int().positive().default(500)),
   // Окрема модель: haiku помітно гірше узагальнює довгий тред.
   KYTSUNIA_DIGEST_MODEL: envValue(z.string().default("claude-sonnet-5")),

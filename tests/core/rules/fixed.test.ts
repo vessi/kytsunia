@@ -794,3 +794,50 @@ describe("fixedRules: chat_persona", () => {
     expect(rule.pattern.test("Кицюня, персональні дані це серйозно")).toBe(false);
   });
 });
+
+describe("fixedRules: digest_max", () => {
+  const rule = findRule("digest_max");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+  const base = { replyTo: 100, chatId: 200 };
+
+  function run(text: string, state = admin) {
+    const m = rule.pattern.exec(text);
+    if (!m) throw new Error(`no match: ${text}`);
+    return rule.produce(buildInput({ text }), m, state);
+  }
+
+  it("shows the ceiling without an argument, with zero or with a non-number", () => {
+    for (const text of [
+      "Кицюня, ліміт дайджесту",
+      "Кицюня, ліміт дайджесту?",
+      "Кицюня, ліміт дайджесту 0",
+      "Кицюня, ліміт дайджесту багато",
+    ]) {
+      expect(run(text)).toEqual([{ kind: "show_digest_max", ...base }]);
+    }
+  });
+
+  it("sets the ceiling from a positive number", () => {
+    expect(run("Кицюня, ліміт дайджесту 200")).toEqual([
+      { kind: "set_digest_max", ...base, max: 200 },
+    ]);
+    expect(run("Кицюня, ліміт дайджесту: 50.")).toEqual([
+      { kind: "set_digest_max", ...base, max: 50 },
+    ]);
+  });
+
+  it("resets on «скинь»", () => {
+    expect(run("Кицюня, ліміт дайджесту скинь")).toEqual([{ kind: "reset_digest_max", ...base }]);
+  });
+
+  it("is silently ignored for non-admins", () => {
+    const input = buildInput({ text: "Кицюня, ліміт дайджесту 200", senderId: 301 });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([]);
+  });
+
+  it("does not collide with the digest command itself", () => {
+    expect(rule.pattern.test("Кицюня, дайджест 200")).toBe(false);
+  });
+});

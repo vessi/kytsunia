@@ -28,6 +28,8 @@ export type ExecuteDeps = {
   instructionStore: InstructionStore;
   chatSettings: ChatSettingsStore;
   defaultModel: string;
+  // Глобальна стеля повідомлень у дайджесті; чат може задати лише нижчу.
+  digestMaxCount: number;
 };
 
 export function toMessageInput(ctx: Context): MessageInput | null {
@@ -248,6 +250,33 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
     case "reset_chat_persona": {
       const had = deps.chatSettings.clearPersona(action.chatId);
       const text = had ? "Повернула персону з коду." : "Тут і так персона з коду.";
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "show_digest_max": {
+      const override = deps.chatSettings.getDigestMaxCount(action.chatId);
+      const max = Math.min(override ?? deps.digestMaxCount, deps.digestMaxCount);
+      const origin = override === null ? "за замовчуванням" : "задано для чату";
+      await ctx.reply(`Дайджест у цьому чаті бере до ${max} повідомлень (${origin}).`, {
+        reply_to_message_id: action.replyTo,
+      });
+      return;
+    }
+    case "set_digest_max": {
+      // Вище глобальної стелі не пускаємо: вона захищає бюджет токенів.
+      const max = Math.min(action.max, deps.digestMaxCount);
+      deps.chatSettings.setDigestMaxCount(action.chatId, max, ctx.from?.id ?? null);
+      const note = max < action.max ? ` Більше за ${deps.digestMaxCount} не можна.` : "";
+      await ctx.reply(`Тепер дайджест у цьому чаті бере до ${max} повідомлень.${note}`, {
+        reply_to_message_id: action.replyTo,
+      });
+      return;
+    }
+    case "reset_digest_max": {
+      const had = deps.chatSettings.clearDigestMaxCount(action.chatId);
+      const text = had
+        ? `Повернула стелю за замовчуванням: ${deps.digestMaxCount} повідомлень.`
+        : `Тут і так стеля за замовчуванням: ${deps.digestMaxCount} повідомлень.`;
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }

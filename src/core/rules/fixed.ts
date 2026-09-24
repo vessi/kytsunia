@@ -309,6 +309,23 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, ліміт дайджесту» — показати стелю повідомлень; «… 200» — задати;
+    // «… скинь» — дефолт з конфіга. Нуль чи не число — показати. Admin only.
+    name: "digest_max",
+    pattern: /(К|к)ицюн(я|ю), ліміт дайджесту(?:\s*[!?.]*$|[\s:]+(.+?)[\s!?.]*$)/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const arg = match[3]?.trim() ?? "";
+      const base = { replyTo: input.messageId, chatId: input.chatId };
+      if (/^(скинь|скинути|дефолт|за замовчуванням)$/i.test(arg)) {
+        return [{ kind: "reset_digest_max", ...base }];
+      }
+      const max = /^\d+$/.test(arg) ? Number.parseInt(arg, 10) : 0;
+      if (max <= 0) return [{ kind: "show_digest_max", ...base }];
+      return [{ kind: "set_digest_max", ...base, max }];
+    },
+  },
+  {
     name: "rate_status",
     pattern: /(К|к)ицюн(я|ю), скільки в мене лишилось\??/,
     produce: (input) => [

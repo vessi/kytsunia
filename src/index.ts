@@ -141,6 +141,7 @@ const invokeDigestDeps: InvokeDigestDeps = {
   log,
   startTyping,
   instructionStore,
+  chatSettings,
 };
 
 log.info(
@@ -201,6 +202,7 @@ bot.on("message", async (ctx) => {
         instructionStore,
         chatSettings,
         defaultModel: config.LLM_MODEL,
+        digestMaxCount: config.KYTSUNIA_DIGEST_MAX_COUNT,
       });
     } catch (err) {
       log.error({ err: err instanceof Error ? err.message : err }, "action execution failed");

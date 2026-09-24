@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import type { Logger } from "../logger.js";
+import type { ChatSettingsStore } from "../storage/chat-settings.js";
 import type { Db } from "../storage/db.js";
 import type { InstructionStore } from "../storage/instructions.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
@@ -38,6 +39,8 @@ export type InvokeDigestDeps = {
   startTyping: TypingStarter;
   // Спеціальні інструкції адміна для чату, дописуються до промпту дайджесту.
   instructionStore: InstructionStore;
+  // Стеля повідомлень на чат: перевизначає maxCount, якщо задана.
+  chatSettings: ChatSettingsStore;
 };
 
 /**
@@ -118,7 +121,12 @@ export async function invokeDigest(
   const chatId = ctx.chat?.id ?? 0;
   const userId = ctx.from?.id ?? 0;
   const userName = ctx.from?.first_name ?? "";
-  const count = resolveCount(requestedCount, deps.defaultCount, deps.maxCount);
+  // Стеля чату нижча за глобальну — ріже і явне число, і дефолт.
+  const maxCount = Math.min(
+    deps.chatSettings.getDigestMaxCount(chatId) ?? deps.maxCount,
+    deps.maxCount,
+  );
+  const count = resolveCount(requestedCount, deps.defaultCount, maxCount);
 
   if (!deps.enabled) {
     deps.log.debug({ chatId, userId }, "digest requested while disabled");

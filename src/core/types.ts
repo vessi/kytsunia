@@ -69,7 +69,11 @@ export type Action =
   // Адмінська персона для чату: текст характеру замість зашитого в коді.
   | { kind: "show_chat_persona"; replyTo: number; chatId: number }
   | { kind: "set_chat_persona"; replyTo: number; chatId: number; text: string }
-  | { kind: "reset_chat_persona"; replyTo: number; chatId: number };
+  | { kind: "reset_chat_persona"; replyTo: number; chatId: number }
+  // Адмінська стеля на кількість повідомлень у дайджесті для чату.
+  | { kind: "show_digest_max"; replyTo: number; chatId: number }
+  | { kind: "set_digest_max"; replyTo: number; chatId: number; max: number }
+  | { kind: "reset_digest_max"; replyTo: number; chatId: number };
 
 export type DynamicRuleSpec = {
   pattern: string;

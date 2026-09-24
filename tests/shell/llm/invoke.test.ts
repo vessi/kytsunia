@@ -76,6 +76,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     checkUserRate: vi.fn().mockReturnValue({ used: 0, limit: 100, allowed: true }),
     checkGlobalRate: vi.fn().mockReturnValue({ used: 0, cap: 1000, allowed: true }),
     usageSummary: vi.fn(),
+    countChatDigestsToday: vi.fn(() => 0),
   };
   const regularsStore = {
     upsert: vi.fn(),
@@ -99,6 +100,9 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
       getPersona: vi.fn(() => null),
       setPersona: vi.fn(),
       clearPersona: vi.fn(),
+      getDigestMaxCount: vi.fn(() => null),
+      setDigestMaxCount: vi.fn(),
+      clearDigestMaxCount: vi.fn(),
     },
     persona: () => "P",
     defaultDailyLimit: 100,
@@ -1184,6 +1188,9 @@ describe("invokeLlmReply: per-chat model", () => {
         getPersona: vi.fn(() => null),
         setPersona: vi.fn(),
         clearPersona: vi.fn(),
+        getDigestMaxCount: vi.fn(() => null),
+        setDigestMaxCount: vi.fn(),
+        clearDigestMaxCount: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, d);
@@ -1212,6 +1219,9 @@ describe("invokeLlmReply: per-chat model", () => {
         getPersona: vi.fn((chatId: number) => (chatId === 1 ? "Ти сумна сова." : null)),
         setPersona: vi.fn(),
         clearPersona: vi.fn(),
+        getDigestMaxCount: vi.fn(() => null),
+        setDigestMaxCount: vi.fn(),
+        clearDigestMaxCount: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, d);

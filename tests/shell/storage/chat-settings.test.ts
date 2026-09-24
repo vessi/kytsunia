@@ -45,6 +45,20 @@ describe("chatSettingsStore", () => {
     expect(store.getPersona(2)).toBeNull();
   });
 
+  it("stores the digest message ceiling independently of the rest", () => {
+    store.setModel(1, "claude-opus-5");
+    store.setDigestMaxCount(1, 200, 7);
+    expect(store.getDigestMaxCount(1)).toBe(200);
+    expect(store.getDigestMaxCount(2)).toBeNull();
+    expect(store.getModel(1)).toBe("claude-opus-5");
+    store.setDigestMaxCount(1, 50);
+    expect(store.getDigestMaxCount(1)).toBe(50);
+    expect(store.clearDigestMaxCount(1)).toBe(true);
+    expect(store.clearDigestMaxCount(1)).toBe(false);
+    expect(store.getDigestMaxCount(1)).toBeNull();
+    expect(store.getModel(1)).toBe("claude-opus-5");
+  });
+
   it("clears and reports whether there was an override", () => {
     store.setModel(1, "claude-opus-5");
     expect(store.clearModel(1)).toBe(true);
