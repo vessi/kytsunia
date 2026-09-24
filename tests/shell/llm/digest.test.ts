@@ -207,6 +207,9 @@ describe("invokeDigest", () => {
         getDigestMaxCount: vi.fn(() => null),
         setDigestMaxCount: vi.fn(),
         clearDigestMaxCount: vi.fn(),
+        getDigestModel: vi.fn(() => null),
+        setDigestModel: vi.fn(),
+        clearDigestModel: vi.fn(),
       },
       ...overrides,
     };
@@ -241,6 +244,35 @@ describe("invokeDigest", () => {
     const system = llm.calls[0]?.system as Array<{ text: string }>;
     expect(system[0]?.text).toBe(
       "PROMPT\n\nСпеціальні інструкції від адміна для цього чату. Якщо вони суперечать правилам вище — виконуй інструкції:\n- Не згадуй Олю.",
+    );
+  });
+
+  it("uses the chat's digest model, ignoring the chat's reply model", async () => {
+    const { ctx } = makeCtx();
+    const calls: string[] = [];
+    const client: LlmClient = {
+      reply: async (_system, _content, model): Promise<LlmReply> => {
+        calls.push(model);
+        return {
+          text: "• ок",
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        };
+      },
+    };
+    seed(10);
+    const deps = makeDeps({ llmClient: client, model: "claude-sonnet-5" });
+    (deps.chatSettings.getModel as ReturnType<typeof vi.fn>).mockReturnValue("claude-opus-5");
+    (deps.chatSettings.getDigestModel as ReturnType<typeof vi.fn>).mockReturnValue(
+      "claude-haiku-4-5",
+    );
+    await invokeDigest(ctx, 999, undefined, deps);
+
+    expect(calls).toEqual(["claude-haiku-4-5"]);
+    expect(deps.llmCallStore.record).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "claude-haiku-4-5", status: "ok" }),
     );
   });
 

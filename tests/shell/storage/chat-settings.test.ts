@@ -59,6 +59,19 @@ describe("chatSettingsStore", () => {
     expect(store.getModel(1)).toBe("claude-opus-5");
   });
 
+  it("keeps the digest model separate from the reply model", () => {
+    store.setModel(1, "claude-opus-5");
+    expect(store.getDigestModel(1)).toBeNull();
+    store.setDigestModel(1, "claude-haiku-4-5", 7);
+    expect(store.getDigestModel(1)).toBe("claude-haiku-4-5");
+    expect(store.getModel(1)).toBe("claude-opus-5");
+    expect(store.clearModel(1)).toBe(true);
+    expect(store.getDigestModel(1)).toBe("claude-haiku-4-5");
+    expect(store.clearDigestModel(1)).toBe(true);
+    expect(store.clearDigestModel(1)).toBe(false);
+    expect(store.getDigestModel(2)).toBeNull();
+  });
+
   it("clears and reports whether there was an override", () => {
     store.setModel(1, "claude-opus-5");
     expect(store.clearModel(1)).toBe(true);

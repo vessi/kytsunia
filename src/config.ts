@@ -59,6 +59,13 @@ const envSchema = z.object({
   KYTSUNIA_DIGEST_MODEL: envValue(z.string().default("claude-sonnet-5")),
   // Скільки слотів добового ліміту зʼїдає один дайджест.
   KYTSUNIA_DIGEST_WEIGHT: envValue(z.coerce.number().int().positive().default(3)),
+  // Профілі постійних учасників: скрипт refresh-regulars і «Кицюня, онови профілі».
+  KYTSUNIA_PROFILE_MODEL: envValue(z.string().default("claude-sonnet-5")),
+  // Мінімум повідомлень за період, щоб отримати профіль.
+  KYTSUNIA_PROFILE_THRESHOLD: envValue(z.coerce.number().int().positive().default(30)),
+  KYTSUNIA_PROFILE_DAYS: envValue(z.coerce.number().int().positive().default(30)),
+  // Скільки останніх повідомлень людини йде в модель.
+  KYTSUNIA_PROFILE_LIMIT_MESSAGES: envValue(z.coerce.number().int().positive().default(200)),
   // Пошук в інтернеті на явну команду «Кицюня, пошукай».
   KYTSUNIA_SEARCH_ENABLED: envValue(
     z

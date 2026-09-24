@@ -93,6 +93,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     llmCallStore,
     db,
     model: "test",
+    digestModel: "digest-test",
     chatSettings: {
       getModel: vi.fn(() => null),
       setModel: vi.fn(),
@@ -103,6 +104,9 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
       getDigestMaxCount: vi.fn(() => null),
       setDigestMaxCount: vi.fn(),
       clearDigestMaxCount: vi.fn(),
+      getDigestModel: vi.fn(() => null),
+      setDigestModel: vi.fn(),
+      clearDigestModel: vi.fn(),
     },
     persona: () => "P",
     defaultDailyLimit: 100,
@@ -1175,7 +1179,7 @@ describe("invokeLlmReply: per-chat model", () => {
 
   it("uses the chat override for the call, the record and the persona", async () => {
     const llm = makeLlm();
-    const persona = vi.fn((model: string) => `P:${model}`);
+    const persona = vi.fn((model: string, digestModel: string) => `P:${model}/${digestModel}`);
     const { ctx } = makeCtx({ text: "Кицюня, привіт" });
     const d = deps({
       llmClient: llm.client,
@@ -1191,14 +1195,18 @@ describe("invokeLlmReply: per-chat model", () => {
         getDigestMaxCount: vi.fn(() => null),
         setDigestMaxCount: vi.fn(),
         clearDigestMaxCount: vi.fn(),
+        getDigestModel: vi.fn(() => null),
+        setDigestModel: vi.fn(),
+        clearDigestModel: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, d);
 
     expect(llm.calls[0]?.model).toBe("claude-opus-5");
-    expect(persona).toHaveBeenCalledWith("claude-opus-5", null);
+    // Модель відповідей не тягне за собою модель дайджесту: та лишається дефолтною.
+    expect(persona).toHaveBeenCalledWith("claude-opus-5", "digest-test", null);
     const system = llm.calls[0]?.system as Array<{ text: string }>;
-    expect(system[0]?.text).toBe("P:claude-opus-5");
+    expect(system[0]?.text).toBe("P:claude-opus-5/digest-test");
     expect(d.llmCallStore.record).toHaveBeenCalledWith(
       expect.objectContaining({ model: "claude-opus-5", status: "ok" }),
     );
@@ -1206,7 +1214,10 @@ describe("invokeLlmReply: per-chat model", () => {
 
   it("hands the chat's persona override to the persona builder", async () => {
     const llm = makeLlm();
-    const persona = vi.fn((model: string, character: string | null) => `${model}|${character}`);
+    const persona = vi.fn(
+      (model: string, digestModel: string, character: string | null) =>
+        `${model}|${digestModel}|${character}`,
+    );
     const { ctx } = makeCtx({ text: "Кицюня, привіт" });
     const d = deps({
       llmClient: llm.client,
@@ -1222,13 +1233,26 @@ describe("invokeLlmReply: per-chat model", () => {
         getDigestMaxCount: vi.fn(() => null),
         setDigestMaxCount: vi.fn(),
         clearDigestMaxCount: vi.fn(),
+        getDigestModel: vi.fn(() => null),
+        setDigestModel: vi.fn(),
+        clearDigestModel: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, d);
 
-    expect(persona).toHaveBeenCalledWith("claude-sonnet-5", "Ти сумна сова.");
+    expect(persona).toHaveBeenCalledWith("claude-sonnet-5", "digest-test", "Ти сумна сова.");
     const system = llm.calls[0]?.system as Array<{ text: string }>;
-    expect(system[0]?.text).toBe("claude-sonnet-5|Ти сумна сова.");
+    expect(system[0]?.text).toBe("claude-sonnet-5|digest-test|Ти сумна сова.");
+  });
+
+  it("tells the persona about the chat's own digest model", async () => {
+    const llm = makeLlm();
+    const persona = vi.fn((model: string, digestModel: string) => `P:${model}/${digestModel}`);
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    const d = deps({ llmClient: llm.client, model: "claude-sonnet-5", persona });
+    (d.chatSettings.getDigestModel as ReturnType<typeof vi.fn>).mockReturnValue("claude-haiku-4-5");
+    await invokeLlmReply(ctx, 999, d);
+    expect(persona).toHaveBeenCalledWith("claude-sonnet-5", "claude-haiku-4-5", null);
   });
 
   it("falls back to the default model without an override", async () => {

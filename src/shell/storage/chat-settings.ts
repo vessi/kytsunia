@@ -15,13 +15,17 @@ export type ChatSettingsStore = {
   getDigestMaxCount: (chatId: number) => number | null;
   setDigestMaxCount: (chatId: number, max: number, updatedByUserId?: number | null) => void;
   clearDigestMaxCount: (chatId: number) => boolean;
+  // Модель дайджесту. null — KYTSUNIA_DIGEST_MODEL; від моделі відповідей не залежить.
+  getDigestModel: (chatId: number) => string | null;
+  setDigestModel: (chatId: number, model: string, updatedByUserId?: number | null) => void;
+  clearDigestModel: (chatId: number) => boolean;
 };
 
 export function makeChatSettingsStore(db: Db): ChatSettingsStore {
   const getStmt = db.prepare(
-    "SELECT model, persona, digest_max_count FROM chat_settings WHERE chat_id = ?",
+    "SELECT model, persona, digest_max_count, digest_model FROM chat_settings WHERE chat_id = ?",
   );
-  type Column = "model" | "persona" | "digest_max_count";
+  type Column = "model" | "persona" | "digest_max_count" | "digest_model";
   const upsert = (column: Column) =>
     db.prepare(
       `INSERT INTO chat_settings (chat_id, ${column}, updated_at, updated_by_user_id)
@@ -42,10 +46,17 @@ export function makeChatSettingsStore(db: Db): ChatSettingsStore {
   const clearPersonaStmt = clear("persona");
   const setDigestMaxStmt = upsert("digest_max_count");
   const clearDigestMaxStmt = clear("digest_max_count");
+  const setDigestModelStmt = upsert("digest_model");
+  const clearDigestModelStmt = clear("digest_model");
 
   const get = (chatId: number) =>
     getStmt.get(chatId) as
-      | { model: string | null; persona: string | null; digest_max_count: number | null }
+      | {
+          model: string | null;
+          persona: string | null;
+          digest_max_count: number | null;
+          digest_model: string | null;
+        }
       | undefined;
 
   return {
@@ -66,5 +77,11 @@ export function makeChatSettingsStore(db: Db): ChatSettingsStore {
       setDigestMaxStmt.run(chatId, max, Date.now(), updatedByUserId);
     },
     clearDigestMaxCount: (chatId) => clearDigestMaxStmt.run(Date.now(), chatId).changes > 0,
+
+    getDigestModel: (chatId) => get(chatId)?.digest_model ?? null,
+    setDigestModel: (chatId, model, updatedByUserId = null) => {
+      setDigestModelStmt.run(chatId, model, Date.now(), updatedByUserId);
+    },
+    clearDigestModel: (chatId) => clearDigestModelStmt.run(Date.now(), chatId).changes > 0,
   };
 }

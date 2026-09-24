@@ -841,3 +841,75 @@ describe("fixedRules: digest_max", () => {
     expect(rule.pattern.test("Кицюня, дайджест 200")).toBe(false);
   });
 });
+
+describe("fixedRules: digest_model", () => {
+  const rule = findRule("digest_model");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+  const base = { replyTo: 100, chatId: 200 };
+
+  function run(text: string, state = admin) {
+    const m = rule.pattern.exec(text);
+    if (!m) throw new Error(`no match: ${text}`);
+    return rule.produce(buildInput({ text }), m, state);
+  }
+
+  it("shows, sets and resets", () => {
+    expect(run("Кицюня, модель дайджесту")).toEqual([{ kind: "show_digest_model", ...base }]);
+    expect(run("Кицюня, модель дайджесту haiku")).toEqual([
+      { kind: "set_digest_model", ...base, model: "haiku" },
+    ]);
+    expect(run("Кицюня, модель дайджесту скинь")).toEqual([
+      { kind: "reset_digest_model", ...base },
+    ]);
+  });
+
+  it("is silently ignored for non-admins", () => {
+    const input = buildInput({ text: "Кицюня, модель дайджесту haiku", senderId: 301 });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([]);
+  });
+
+  it("wins over chat_model in rule order", () => {
+    const digestIdx = fixedRules.findIndex((r) => r.name === "digest_model");
+    const chatIdx = fixedRules.findIndex((r) => r.name === "chat_model");
+    expect(digestIdx).toBeLessThan(chatIdx);
+    expect(findRule("chat_model").pattern.test("Кицюня, модель дайджесту haiku")).toBe(true);
+  });
+});
+
+describe("fixedRules: refresh_profiles", () => {
+  const rule = findRule("refresh_profiles");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+
+  it("produces the refresh action for the admin", () => {
+    for (const text of ["Кицюня, онови профілі", "Кицюня, онови профілі!"]) {
+      const m = rule.pattern.exec(text);
+      if (!m) throw new Error("no match");
+      expect(rule.produce(buildInput({ text }), m, admin)).toEqual([
+        { kind: "refresh_profiles", replyTo: 100, chatId: 200 },
+      ]);
+    }
+  });
+
+  it("is silently ignored for non-admins", () => {
+    const input = buildInput({ text: "Кицюня, онови профілі", senderId: 301 });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([]);
+  });
+});
+
+describe("fixedRules: roster", () => {
+  const rule = findRule("roster");
+
+  it("is available to everyone", () => {
+    for (const text of ["Кицюня, розкажи про учасників", "Кицюня, розкажи про учасників?"]) {
+      const m = rule.pattern.exec(text);
+      if (!m) throw new Error("no match");
+      expect(rule.produce(buildInput({ text, senderId: 301 }), m, buildState())).toEqual([
+        { kind: "invoke_roster", replyTo: 100 },
+      ]);
+    }
+  });
+});

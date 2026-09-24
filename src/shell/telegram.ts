@@ -6,6 +6,10 @@ import type { InvokeLlmDeps } from "./llm/invoke.js";
 import { invokeLlmReply } from "./llm/invoke.js";
 import { modelChoicesHelp, resolveModel } from "./llm/models.js";
 import { PERSONA_PROMPT } from "./llm/persona.js";
+import type { ProfileRefreshDeps, RefreshOptions } from "./llm/profile-refresh.js";
+import { refreshProfiles } from "./llm/profile-refresh.js";
+import type { InvokeRosterDeps } from "./llm/roster.js";
+import { invokeRoster } from "./llm/roster.js";
 import type { ChatSettingsStore } from "./storage/chat-settings.js";
 import type { InstructionStore } from "./storage/instructions.js";
 import type { LlmCallStore } from "./storage/llm-calls.js";
@@ -23,13 +27,19 @@ export type ExecuteDeps = {
   defaultDailyLimit: number;
   invokeLlmDeps: InvokeLlmDeps;
   invokeDigestDeps: InvokeDigestDeps;
+  invokeRosterDeps: InvokeRosterDeps;
   optOutsStore: OptOutsStore;
   regularsStore: RegularsStore;
   instructionStore: InstructionStore;
   chatSettings: ChatSettingsStore;
   defaultModel: string;
+  defaultDigestModel: string;
   // Глобальна стеля повідомлень у дайджесті; чат може замінити її будь-якою.
   digestMaxCount: number;
+  profileRefresh: ProfileRefreshDeps;
+  profileRefreshOptions: Pick<RefreshOptions, "threshold" | "days" | "limitMessages" | "model">;
+  // Чати, де оновлення профілів уже йде: другий запит поспіль не запускаємо.
+  profileRefreshInProgress: Set<number>;
 };
 
 export function toMessageInput(ctx: Context): MessageInput | null {
@@ -253,6 +263,36 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }
+    case "show_digest_model": {
+      const override = deps.chatSettings.getDigestModel(action.chatId);
+      const text = override
+        ? `Дайджест у цьому чаті пише ${override}. За замовчуванням була б ${deps.defaultDigestModel}.`
+        : `Дайджест у цьому чаті пише ${deps.defaultDigestModel} (за замовчуванням).`;
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "set_digest_model": {
+      const model = resolveModel(action.model);
+      if (!model) {
+        await ctx.reply(`Не знаю такої моделі. ${modelChoicesHelp()}`, {
+          reply_to_message_id: action.replyTo,
+        });
+        return;
+      }
+      deps.chatSettings.setDigestModel(action.chatId, model, ctx.from?.id ?? null);
+      await ctx.reply(`Тепер дайджест у цьому чаті пише ${model}.`, {
+        reply_to_message_id: action.replyTo,
+      });
+      return;
+    }
+    case "reset_digest_model": {
+      const had = deps.chatSettings.clearDigestModel(action.chatId);
+      const text = had
+        ? `Повернула модель дайджесту за замовчуванням: ${deps.defaultDigestModel}.`
+        : `Тут і так модель дайджесту за замовчуванням: ${deps.defaultDigestModel}.`;
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
     case "show_digest_max": {
       const override = deps.chatSettings.getDigestMaxCount(action.chatId);
       const max = override ?? deps.digestMaxCount;
@@ -275,6 +315,47 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
         ? `Повернула стелю за замовчуванням: ${deps.digestMaxCount} повідомлень.`
         : `Тут і так стеля за замовчуванням: ${deps.digestMaxCount} повідомлень.`;
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "refresh_profiles": {
+      if (deps.profileRefreshInProgress.has(action.chatId)) {
+        await ctx.reply("Уже оновлюю, зачекай.", { reply_to_message_id: action.replyTo });
+        return;
+      }
+      // Десяток викликів моделі — це хвилина. Не тримаємо чергу апдейтів:
+      // відповідаємо одразу, а результат досилаємо, коли закінчимо.
+      deps.profileRefreshInProgress.add(action.chatId);
+      await ctx.reply("Оновлюю профілі цього чату, напишу, як закінчу.", {
+        reply_to_message_id: action.replyTo,
+      });
+      const api = ctx.api;
+      void refreshProfiles(deps.profileRefresh, {
+        ...deps.profileRefreshOptions,
+        chatId: action.chatId,
+        requestedByUserId: ctx.from?.id ?? 0,
+        requestedByName: ctx.from?.first_name ?? "",
+      })
+        .then((r) => {
+          const parts = [
+            r.processed === 0
+              ? "Оновлювати нема кого: постійних учасників не набралось."
+              : `Оновила профілі: ${r.processed}.`,
+          ];
+          if (r.failed > 0) parts.push(`Не вийшло: ${r.failed}.`);
+          if (r.skipped > 0) parts.push(`Пропустила (просили не профайлити): ${r.skipped}.`);
+          if (r.processed > 0) parts.push(`Коштувало $${r.totalCostUsd.toFixed(3)}.`);
+          return api.sendMessage(action.chatId, parts.join(" "), {
+            reply_parameters: { message_id: action.replyTo },
+          });
+        })
+        .catch((err) => {
+          deps.profileRefresh.log.error(
+            { err: err instanceof Error ? err.message : err, chatId: action.chatId },
+            "profile refresh failed",
+          );
+          return api.sendMessage(action.chatId, "Оновлення профілів зламалось, глянь логи.");
+        })
+        .finally(() => deps.profileRefreshInProgress.delete(action.chatId));
       return;
     }
     case "opt_out_profile": {
@@ -318,6 +399,10 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
 
     case "invoke_digest":
       await invokeDigest(ctx, action.replyTo, action.count, deps.invokeDigestDeps);
+      return;
+
+    case "invoke_roster":
+      await invokeRoster(ctx, action.replyTo, deps.invokeRosterDeps);
       return;
   }
 }

@@ -66,6 +66,10 @@ export type Action =
   | { kind: "show_chat_model"; replyTo: number; chatId: number }
   | { kind: "set_chat_model"; replyTo: number; chatId: number; model: string }
   | { kind: "reset_chat_model"; replyTo: number; chatId: number }
+  // Те саме для моделі дайджесту, окремо від моделі відповідей.
+  | { kind: "show_digest_model"; replyTo: number; chatId: number }
+  | { kind: "set_digest_model"; replyTo: number; chatId: number; model: string }
+  | { kind: "reset_digest_model"; replyTo: number; chatId: number }
   // Адмінська персона для чату: текст характеру замість зашитого в коді.
   | { kind: "show_chat_persona"; replyTo: number; chatId: number }
   | { kind: "set_chat_persona"; replyTo: number; chatId: number; text: string }
@@ -73,7 +77,11 @@ export type Action =
   // Адмінська стеля на кількість повідомлень у дайджесті для чату.
   | { kind: "show_digest_max"; replyTo: number; chatId: number }
   | { kind: "set_digest_max"; replyTo: number; chatId: number; max: number }
-  | { kind: "reset_digest_max"; replyTo: number; chatId: number };
+  | { kind: "reset_digest_max"; replyTo: number; chatId: number }
+  // «Розкажи про учасників»: короткий портрет кожного постійного з профілів у базі.
+  | { kind: "invoke_roster"; replyTo: number }
+  // Адмінське оновлення профілів постійних учасників цього чату.
+  | { kind: "refresh_profiles"; replyTo: number; chatId: number };
 
 export type DynamicRuleSpec = {
   pattern: string;

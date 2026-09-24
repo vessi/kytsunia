@@ -7,6 +7,7 @@ import { makeLlmClient } from "./shell/llm/anthropic.js";
 import type { InvokeDigestDeps } from "./shell/llm/digest.js";
 import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
 import { buildPersonaPrompt, DIGEST_PROMPT, SEARCH_PROMPT } from "./shell/llm/persona.js";
+import type { InvokeRosterDeps } from "./shell/llm/roster.js";
 import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
 import { makeChatSettingsStore } from "./shell/storage/chat-settings.js";
@@ -32,6 +33,7 @@ const regularsStore = makeRegularsStore(db);
 const optOutsStore = makeOptOutsStore(db);
 const instructionStore = makeInstructionStore(db);
 const chatSettings = makeChatSettingsStore(db);
+const profileRefreshInProgress = new Set<number>();
 log.info({ dbPath: config.DB_PATH }, "database opened");
 log.info({ count: regularsStore.list().length }, "regulars loaded");
 log.info({ count: optOutsStore.list().length }, "profile opt-outs loaded");
@@ -75,14 +77,14 @@ log.info({ username: bot.botInfo.username, id: botUserId }, "bot info loaded");
 // характер командою, а технічна частина промпту від цього не залежить.
 // Кешуємо за парою, бо текст стабільний, а будується на кожен виклик.
 const personaCache = new Map<string, string>();
-const personaFor = (model: string, character: string | null): string => {
-  const key = `${model}\u0000${character ?? ""}`;
+const personaFor = (model: string, digestModel: string, character: string | null): string => {
+  const key = `${model}\u0000${digestModel}\u0000${character ?? ""}`;
   let persona = personaCache.get(key);
   if (persona === undefined) {
     persona = buildPersonaPrompt({
       model,
       ...(character !== null ? { character } : {}),
-      digestModel: config.KYTSUNIA_DIGEST_MODEL,
+      digestModel,
       visionEnabled: config.KYTSUNIA_VISION_ENABLED,
       digestEnabled: config.KYTSUNIA_DIGEST_ENABLED,
       searchEnabled: config.KYTSUNIA_SEARCH_ENABLED,
@@ -97,6 +99,7 @@ const invokeLlmDeps: InvokeLlmDeps = {
   llmCallStore,
   db,
   model: config.LLM_MODEL,
+  digestModel: config.KYTSUNIA_DIGEST_MODEL,
   chatSettings,
   persona: personaFor,
   defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
@@ -142,6 +145,22 @@ const invokeDigestDeps: InvokeDigestDeps = {
   startTyping,
   instructionStore,
   chatSettings,
+};
+
+const invokeRosterDeps: InvokeRosterDeps = {
+  llmClient,
+  llmCallStore,
+  regularsStore,
+  optedOutUserIds: () => new Set(optOutsStore.list()),
+  instructionStore,
+  chatSettings,
+  model: config.LLM_MODEL,
+  digestModel: config.KYTSUNIA_DIGEST_MODEL,
+  persona: personaFor,
+  defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
+  globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
+  log,
+  startTyping,
 };
 
 log.info(
@@ -197,11 +216,28 @@ bot.on("message", async (ctx) => {
         defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
         invokeLlmDeps,
         invokeDigestDeps,
+        invokeRosterDeps,
         optOutsStore,
         regularsStore,
         instructionStore,
         chatSettings,
         defaultModel: config.LLM_MODEL,
+        defaultDigestModel: config.KYTSUNIA_DIGEST_MODEL,
+        profileRefresh: {
+          db,
+          llmClient,
+          regularsStore,
+          llmCallStore,
+          optedOutUserIds: () => new Set(optOutsStore.list()),
+          log,
+        },
+        profileRefreshOptions: {
+          threshold: config.KYTSUNIA_PROFILE_THRESHOLD,
+          days: config.KYTSUNIA_PROFILE_DAYS,
+          limitMessages: config.KYTSUNIA_PROFILE_LIMIT_MESSAGES,
+          model: config.KYTSUNIA_PROFILE_MODEL,
+        },
+        profileRefreshInProgress,
         digestMaxCount: config.KYTSUNIA_DIGEST_MAX_COUNT,
       });
     } catch (err) {

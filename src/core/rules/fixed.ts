@@ -273,6 +273,22 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, модель дайджесту [haiku|скинь]». Стоїть перед chat_model, бо
+    // той інакше зʼїв би «дайджесту haiku» як назву моделі.
+    name: "digest_model",
+    pattern: /(К|к)ицюн(я|ю), модель дайджесту(?:\s*[!?.]*$|[\s:]+(.+?)[\s!?.]*$)/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const arg = match[3]?.trim() ?? "";
+      const base = { replyTo: input.messageId, chatId: input.chatId };
+      if (!arg) return [{ kind: "show_digest_model", ...base }];
+      if (/^(скинь|скинути|дефолт|за замовчуванням)$/i.test(arg)) {
+        return [{ kind: "reset_digest_model", ...base }];
+      }
+      return [{ kind: "set_digest_model", ...base, model: arg }];
+    },
+  },
+  {
     // «Кицюня, модель» — яка модель у цьому чаті; «Кицюня, модель opus» —
     // перемкнути; «Кицюня, модель скинь» — повернути дефолт. Admin only.
     // Після «модель» має бути кінець, розділовий знак або пробіл, щоб не
@@ -323,6 +339,23 @@ export const fixedRules: FixedRule[] = [
       const max = /^\d+$/.test(arg) ? Number.parseInt(arg, 10) : 0;
       if (max <= 0) return [{ kind: "show_digest_max", ...base }];
       return [{ kind: "set_digest_max", ...base, max }];
+    },
+  },
+  {
+    // «Кицюня, розкажи про учасників» — по абзацу на кожного постійного, з
+    // профілів у базі. Для всіх: профілі й так без чутливого.
+    name: "roster",
+    pattern: /(К|к)ицюн(я|ю), розкажи про учасників(?:[!?.\s,]|$)/,
+    produce: (input) => [{ kind: "invoke_roster", replyTo: input.messageId }],
+  },
+  {
+    // «Кицюня, онови профілі» — перегенерувати профілі постійних учасників
+    // цього чату. Admin only.
+    name: "refresh_profiles",
+    pattern: /(К|к)ицюн(я|ю), онови профілі(?:[!?.\s,]|$)/,
+    produce: (input, _match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      return [{ kind: "refresh_profiles", replyTo: input.messageId, chatId: input.chatId }];
     },
   },
   {

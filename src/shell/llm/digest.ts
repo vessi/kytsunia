@@ -26,6 +26,7 @@ export type InvokeDigestDeps = {
   llmClient: LlmClient;
   llmCallStore: LlmCallStore;
   db: Db;
+  // Модель дайджесту за замовчуванням; чат може задати свою.
   model: string;
   prompt: string;
   defaultCount: number;
@@ -121,6 +122,9 @@ export async function invokeDigest(
   const chatId = ctx.chat?.id ?? 0;
   const userId = ctx.from?.id ?? 0;
   const userName = ctx.from?.first_name ?? "";
+  // Модель дайджесту чату, якщо адмін її задав, інакше глобальна. Від моделі
+  // відповідей чату не залежить.
+  const model = deps.chatSettings.getDigestModel(chatId) ?? deps.model;
   // Стеля чату замінює глобальну в обидва боки: адмін може і врізати, і
   // підняти. Ріже і явне число, і дефолт.
   const maxCount = deps.chatSettings.getDigestMaxCount(chatId) ?? deps.maxCount;
@@ -138,7 +142,7 @@ export async function invokeDigest(
     userId,
     userName,
     triggerMsgId: replyTo,
-    model: deps.model,
+    model,
     weight: deps.weight,
   };
 
@@ -180,8 +184,8 @@ export async function invokeDigest(
   const stopTyping = deps.startTyping(ctx);
 
   try {
-    const reply = await deps.llmClient.reply(system, userMessage, deps.model, DIGEST_MAX_TOKENS);
-    const cost = calculateCost(deps.model, {
+    const reply = await deps.llmClient.reply(system, userMessage, model, DIGEST_MAX_TOKENS);
+    const cost = calculateCost(model, {
       inputTokens: reply.inputTokens,
       outputTokens: reply.outputTokens,
       cacheReadTokens: reply.cacheReadTokens,

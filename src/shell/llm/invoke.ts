@@ -25,10 +25,12 @@ export type InvokeLlmDeps = {
   db: Db;
   // Модель за замовчуванням; чат може перевизначити її через chatSettings.
   model: string;
+  // Модель дайджесту за замовчуванням: персона чесно каже, хто пише дайджести.
+  digestModel: string;
   chatSettings: ChatSettingsStore;
-  // Персона залежить від моделі (вона чесно називає, на чому працює) і від
+  // Персона залежить від моделей (вона чесно називає, на чому працює) і від
   // чату (адмін може замінити характер), тому будується на кожен виклик.
-  persona: (model: string, character: string | null) => string;
+  persona: (model: string, digestModel: string, character: string | null) => string;
   defaultDailyLimit: number;
   globalDailyCap: number;
   recentContextSize: number;
@@ -264,7 +266,9 @@ export async function invokeLlmReply(
   const chatId = ctx.chat?.id ?? 0;
   const userId = ctx.from?.id ?? 0;
   const userName = ctx.from?.first_name ?? "";
+  // Обидві моделі чат може перевизначити окремо; персона чесно називає обидві.
   const model = deps.chatSettings.getModel(chatId) ?? deps.model;
+  const digestModel = deps.chatSettings.getDigestModel(chatId) ?? deps.digestModel;
   const search = options.search;
   // При пошуку у відповідь на повідомлення сам тригер — просто «Кицюня, пошукай»,
   // а що шукати, лежить у query. Тому текст для моделі складаємо явно.
@@ -409,7 +413,7 @@ export async function invokeLlmReply(
     // Інструкції адміна й пошуку дописуємо в кінець персони, а не окремим
     // блоком: так вони потрапляють у той самий кешований префікс.
     const base = withSpecialInstructions(
-      deps.persona(model, deps.chatSettings.getPersona(chatId)),
+      deps.persona(model, digestModel, deps.chatSettings.getPersona(chatId)),
       deps.instructionStore.list(chatId).map((i) => i.text),
     );
     const persona = search ? `${base}\n\n${deps.searchPrompt}` : base;
