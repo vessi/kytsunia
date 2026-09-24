@@ -266,14 +266,14 @@ describe("invokeDigest", () => {
     expect(llm.calls[0]?.content).toContain("останні 12 повідомлень");
   });
 
-  it("never lets a chat ceiling exceed the global max", async () => {
+  it("lets a chat ceiling exceed the global max", async () => {
     const { ctx } = makeCtx();
     const llm = makeFakeLlm();
     seed(30);
     const deps = makeDeps({ llmClient: llm.client, defaultCount: 300, maxCount: 15 });
     (deps.chatSettings.getDigestMaxCount as ReturnType<typeof vi.fn>).mockReturnValue(1000);
     await invokeDigest(ctx, 999, 25, deps);
-    expect(llm.calls[0]?.content).toContain("останні 15 повідомлень");
+    expect(llm.calls[0]?.content).toContain("останні 25 повідомлень");
   });
 
   it("refuses when the feature flag is off", async () => {

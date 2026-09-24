@@ -39,7 +39,7 @@ export type InvokeDigestDeps = {
   startTyping: TypingStarter;
   // Спеціальні інструкції адміна для чату, дописуються до промпту дайджесту.
   instructionStore: InstructionStore;
-  // Стеля повідомлень на чат: перевизначає maxCount, якщо задана.
+  // Стеля повідомлень на чат: замінює maxCount, якщо задана, і вгору теж.
   chatSettings: ChatSettingsStore;
 };
 
@@ -121,11 +121,9 @@ export async function invokeDigest(
   const chatId = ctx.chat?.id ?? 0;
   const userId = ctx.from?.id ?? 0;
   const userName = ctx.from?.first_name ?? "";
-  // Стеля чату нижча за глобальну — ріже і явне число, і дефолт.
-  const maxCount = Math.min(
-    deps.chatSettings.getDigestMaxCount(chatId) ?? deps.maxCount,
-    deps.maxCount,
-  );
+  // Стеля чату замінює глобальну в обидва боки: адмін може і врізати, і
+  // підняти. Ріже і явне число, і дефолт.
+  const maxCount = deps.chatSettings.getDigestMaxCount(chatId) ?? deps.maxCount;
   const count = resolveCount(requestedCount, deps.defaultCount, maxCount);
 
   if (!deps.enabled) {
