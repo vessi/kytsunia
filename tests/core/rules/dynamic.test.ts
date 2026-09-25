@@ -21,6 +21,7 @@ describe("matchDynamic", () => {
         dynamic: [],
         policy: {},
         optedOutUserIds: new Set(),
+        ignoredUserIds: new Set(),
       }),
     ).toBeNull();
   });
@@ -30,6 +31,7 @@ describe("matchDynamic", () => {
       dynamic: [{ pattern: "test.гіф", type: "gif", fileId: "FX" }],
       policy: {},
       optedOutUserIds: new Set(),
+      ignoredUserIds: new Set(),
     };
     const result = matchDynamic(buildInput("test.гіф"), state);
     expect(result).toEqual([{ kind: "send_animation", chatId: 100, fileId: "FX" }]);
@@ -40,6 +42,7 @@ describe("matchDynamic", () => {
       dynamic: [{ pattern: "wow.стікер", type: "sticker", fileId: "SX" }],
       policy: {},
       optedOutUserIds: new Set(),
+      ignoredUserIds: new Set(),
     };
     const result = matchDynamic(buildInput("wow.стікер"), state);
     expect(result).toEqual([{ kind: "send_sticker", chatId: 100, fileId: "SX" }]);
@@ -53,6 +56,7 @@ describe("matchDynamic", () => {
       ],
       policy: {},
       optedOutUserIds: new Set(),
+      ignoredUserIds: new Set(),
     };
     const result = matchDynamic(buildInput("test.гіф"), state);
     expect(result?.[0]?.kind).toBe("send_animation");

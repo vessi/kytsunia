@@ -20,6 +20,7 @@ function buildState(overrides: Partial<State> = {}): State {
     dynamic: [],
     policy: {},
     optedOutUserIds: new Set(),
+    ignoredUserIds: new Set(),
     ...overrides,
   };
 }
@@ -910,6 +911,62 @@ describe("fixedRules: roster", () => {
       expect(rule.produce(buildInput({ text, senderId: 301 }), m, buildState())).toEqual([
         { kind: "invoke_roster", replyTo: 100 },
       ]);
+    }
+  });
+});
+
+describe("fixedRules: ignore_user / unignore_user / list_ignored", () => {
+  const admin = buildState({ policy: { adminUserId: 300, botUserId: 9999 } });
+  const reply = { messageId: 5, authorId: 42, authorName: "Troll" };
+
+  function run(name: string, input: Partial<MessageInput>, state = admin) {
+    const rule = findRule(name);
+    const full = buildInput(input);
+    const m = rule.pattern.exec(full.text);
+    if (!m) throw new Error(`no match: ${full.text}`);
+    return rule.produce(full, m, state);
+  }
+
+  it("ignores the author of the replied-to message", () => {
+    expect(run("ignore_user", { text: "Кицюня, ігноруй", replyTo: reply })).toEqual([
+      { kind: "ignore_user", replyTo: 100, userId: 42, userName: "Troll" },
+    ]);
+  });
+
+  it("asks whom without a reply", () => {
+    expect(run("ignore_user", { text: "Кицюня, ігноруй" })).toEqual([
+      { kind: "reply_text", text: "Кого?", replyTo: 100 },
+    ]);
+  });
+
+  it("refuses to ignore the bot or the admin", () => {
+    for (const authorId of [9999, 300]) {
+      expect(
+        run("ignore_user", { text: "Кицюня, ігноруй!", replyTo: { ...reply, authorId } }),
+      ).toEqual([{ kind: "reply_text", text: "Оце вже ні.", replyTo: 100 }]);
+    }
+  });
+
+  it("does not let «не ігноруй» fall into the ignore rule", () => {
+    expect(findRule("ignore_user").pattern.test("Кицюня, не ігноруй")).toBe(false);
+    expect(run("unignore_user", { text: "Кицюня, не ігноруй", replyTo: reply })).toEqual([
+      { kind: "unignore_user", replyTo: 100, userId: 42, userName: "Troll" },
+    ]);
+  });
+
+  it("lists for the admin", () => {
+    expect(run("list_ignored", { text: "Кицюня, кого ігноруєш?" })).toEqual([
+      { kind: "list_ignored", replyTo: 100 },
+    ]);
+  });
+
+  it("is silently ignored for non-admins", () => {
+    for (const [name, text] of [
+      ["ignore_user", "Кицюня, ігноруй"],
+      ["unignore_user", "Кицюня, не ігноруй"],
+      ["list_ignored", "Кицюня, кого ігноруєш?"],
+    ] as const) {
+      expect(run(name, { text, senderId: 301, replyTo: reply })).toEqual([]);
     }
   });
 });

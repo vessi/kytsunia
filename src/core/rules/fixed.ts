@@ -349,6 +349,56 @@ export const fixedRules: FixedRule[] = [
     produce: (input) => [{ kind: "invoke_roster", replyTo: input.messageId }],
   },
   {
+    // «Кицюня, не ігноруй» у відповідь на повідомлення людини. Admin only.
+    // Стоїть перед ignore_user лише для читабельності: патерни не перетинаються.
+    name: "unignore_user",
+    pattern: /(К|к)ицюн(я|ю), не ігноруй(?:[!?.\s,]|$)/,
+    produce: (input, _match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const target = input.replyTo;
+      if (!target) return [{ kind: "reply_text", text: "Кого?", replyTo: input.messageId }];
+      return [
+        {
+          kind: "unignore_user",
+          replyTo: input.messageId,
+          userId: target.authorId,
+          userName: target.authorName,
+        },
+      ];
+    },
+  },
+  {
+    // «Кицюня, ігноруй» у відповідь на повідомлення людини: більше жодної
+    // реакції на неї, крім «забудь мене». Себе й адміна не ігноруємо. Admin only.
+    name: "ignore_user",
+    pattern: /(К|к)ицюн(я|ю), ігноруй(?:[!?.\s,]|$)/,
+    produce: (input, _match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const target = input.replyTo;
+      if (!target) return [{ kind: "reply_text", text: "Кого?", replyTo: input.messageId }];
+      if (target.authorId === state.policy.botUserId || target.authorId === input.senderId) {
+        return [{ kind: "reply_text", text: "Оце вже ні.", replyTo: input.messageId }];
+      }
+      return [
+        {
+          kind: "ignore_user",
+          replyTo: input.messageId,
+          userId: target.authorId,
+          userName: target.authorName,
+        },
+      ];
+    },
+  },
+  {
+    // «Кицюня, кого ігноруєш?» — список. Admin only.
+    name: "list_ignored",
+    pattern: /(К|к)ицюн(я|ю), кого ігноруєш\??/,
+    produce: (input, _match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      return [{ kind: "list_ignored", replyTo: input.messageId }];
+    },
+  },
+  {
     // «Кицюня, онови профілі» — перегенерувати профілі постійних учасників
     // цього чату. Admin only.
     name: "refresh_profiles",

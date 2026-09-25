@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import { describe, expect, it } from "vitest";
-import { toMessageInput } from "../../src/shell/telegram.js";
+import { toMessageInput, withoutPhotos } from "../../src/shell/telegram.js";
 
 // Мінімально необхідний моковий Context. Тести фокусуються на toMessageInput,
 // тож решту полів не вигадуємо.
@@ -103,5 +103,26 @@ describe("toMessageInput", () => {
     expect(input?.photoFileId).toBeUndefined();
     expect(input?.photoUniqueId).toBeUndefined();
     expect(input?.mediaGroupId).toBeUndefined();
+  });
+});
+
+describe("withoutPhotos", () => {
+  it("drops every photo reference and keeps the rest", () => {
+    const ctx = makeCtx({
+      message_id: 1,
+      chat: { id: 100 },
+      from: { id: 42, first_name: "Troll" },
+      date: 1,
+      caption: "дивись",
+      photo: [{ file_id: "f", file_unique_id: "u" }],
+      media_group_id: "G1",
+    });
+    const input = toMessageInput(ctx);
+    if (!input) throw new Error("no input");
+    const stripped = withoutPhotos(input);
+    expect(stripped.photoFileId).toBeUndefined();
+    expect(stripped.photoUniqueId).toBeUndefined();
+    expect(stripped.mediaGroupId).toBeUndefined();
+    expect(stripped).toMatchObject({ text: "дивись", senderId: 42, kind: "photo", chatId: 100 });
   });
 });

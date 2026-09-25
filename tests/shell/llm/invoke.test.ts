@@ -114,6 +114,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     recentContextSize: 10,
     regularsStore,
     instructionStore: { list: vi.fn(() => []), add: vi.fn(), remove: vi.fn() },
+    isIgnored: () => false,
     rng: () => 0,
     log: silentLog,
     visionEnabled: true,
@@ -1143,6 +1144,75 @@ describe("invokeLlmReply: web search", () => {
     await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client }));
 
     expect(String(reply.mock.calls[0]?.[0]).trim()).not.toBe("");
+  });
+});
+
+describe("invokeLlmReply: ignored users", () => {
+  const opened: InvokeLlmDeps[] = [];
+
+  afterEach(() => {
+    for (const d of opened.splice(0)) d.db.close();
+  });
+
+  function deps(overrides: Partial<InvokeLlmDeps>): InvokeLlmDeps {
+    const d = makeBaseDeps(overrides);
+    opened.push(d);
+    return d;
+  }
+
+  function makeLlm() {
+    const calls: Array<{ system: SystemContent; content: UserContent }> = [];
+    const client: LlmClient = {
+      reply: async (system, content) => {
+        calls.push({ system, content });
+        return {
+          text: "ок",
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        };
+      },
+    };
+    return { client, calls };
+  }
+
+  it("hides the photo of a reply target from an ignored user but keeps the text", async () => {
+    const llm = makeLlm();
+    const fetcher = vi.fn().mockResolvedValue({ mime: "image/jpeg", base64: "B64" });
+    const { ctx } = makeCtx({ text: "Кицюня, що це?" });
+    (ctx.message as { reply_to_message?: unknown }).reply_to_message = {
+      message_id: 5,
+      from: { id: 42, first_name: "Troll" },
+      text: "дивись",
+      photo: [{ file_id: "troll", file_unique_id: "troll_u" }],
+    };
+    const d = deps({ llmClient: llm.client, photoFetcher: fetcher, isIgnored: (id) => id === 42 });
+    await invokeLlmReply(ctx, 999, d);
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(typeof llm.calls[0]?.content).toBe("string");
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system.map((b) => b.text).join("\n")).toContain("Гілка");
+    expect(system.map((b) => b.text).join("\n")).toContain("дивись");
+  });
+
+  it("keeps showing replies to non-ignored users", async () => {
+    const llm = makeLlm();
+    const fetcher = vi.fn().mockResolvedValue({ mime: "image/jpeg", base64: "B64" });
+    const { ctx } = makeCtx({ text: "Кицюня, що це?" });
+    (ctx.message as { reply_to_message?: unknown }).reply_to_message = {
+      message_id: 5,
+      from: { id: 43, first_name: "Olha" },
+      text: "дивись",
+      photo: [{ file_id: "ok", file_unique_id: "ok_u" }],
+    };
+    const d = deps({ llmClient: llm.client, photoFetcher: fetcher, isIgnored: (id) => id === 42 });
+    await invokeLlmReply(ctx, 999, d);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system.map((b) => b.text).join("\n")).toContain("дивись");
   });
 });
 

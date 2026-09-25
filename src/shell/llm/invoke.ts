@@ -37,6 +37,9 @@ export type InvokeLlmDeps = {
   regularsStore: RegularsStore;
   // Спеціальні інструкції адміна для чату, дописуються до персони.
   instructionStore: InstructionStore;
+  // Ігноровані: їхні фото в базу не пишуться, але ціль відповіді приходить
+  // прямо з Telegram — її фото теж не показуємо моделі. Текст лишається.
+  isIgnored: (userId: number) => boolean;
   rng: () => number;
   log: Logger;
   // Vision
@@ -343,6 +346,8 @@ export async function invokeLlmReply(
     // Гілка, на яку відповідають: без неї «а чому саме так?» у reply на давню
     // репліку приходить до моделі без самої репліки.
     const replyMessage = ctx.message?.reply_to_message;
+    const replyFromIgnored =
+      replyMessage?.from !== undefined && deps.isIgnored(replyMessage.from.id);
     const thread = replyMessage
       ? collectThread(deps.db, chatId, replyTargetFromMessage(replyMessage), deps.threadDepth)
       : [];
@@ -353,9 +358,10 @@ export async function invokeLlmReply(
     //    - TTL fallback: останнє фото в чаті за N секунд, якщо нічого вище не знайшли
     //    Історичні фото поза цими каналами НЕ підтягуються (recency-photo-bias).
     const triggerRaw = deps.visionEnabled ? collectTriggerPhotos(ctx, deps.db) : [];
-    const replyRaw = deps.visionEnabled
-      ? collectReplyTargetPhotos(ctx, deps.db, deps.threadDepth)
-      : [];
+    const replyRaw =
+      deps.visionEnabled && !replyFromIgnored
+        ? collectReplyTargetPhotos(ctx, deps.db, deps.threadDepth)
+        : [];
 
     // Per-album cap до кожного джерела окремо.
     const triggerPhotoRefs = triggerRaw.slice(0, deps.maxPhotosPerAlbum);

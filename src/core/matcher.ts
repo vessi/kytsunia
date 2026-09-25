@@ -5,7 +5,15 @@ import { matchLlmFallback } from "./rules/llm-fallback.js";
 import { matchUrlRewrites } from "./rules/urls.js";
 import type { Action, MessageInput, State } from "./types.js";
 
+// Єдине, що лишається ігнорованому: стерти свій профіль.
+const OPT_OUT_RULE = fixedRules.find((r) => r.name === "opt_out_profile");
+
 export function match(input: MessageInput, state: State): Action[] | null {
+  if (state.ignoredUserIds.has(input.senderId)) {
+    const m = OPT_OUT_RULE?.pattern.exec(input.text);
+    return m && OPT_OUT_RULE ? OPT_OUT_RULE.produce(input, m, state) : null;
+  }
+
   const fwd = matchForward(input);
   if (fwd) return fwd;
 

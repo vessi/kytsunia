@@ -12,6 +12,7 @@ import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
 import { makeChatSettingsStore } from "./shell/storage/chat-settings.js";
 import { openDb } from "./shell/storage/db.js";
+import { makeIgnoredUsersStore } from "./shell/storage/ignored.js";
 import { makeInstructionStore } from "./shell/storage/instructions.js";
 import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
 import { makeMessageAppender, makeMessageEditor } from "./shell/storage/messages.js";
@@ -19,7 +20,7 @@ import { makeOptOutsStore } from "./shell/storage/opt-outs.js";
 import { makePhotoCacheStore } from "./shell/storage/photo-cache.js";
 import { makeRegularsStore } from "./shell/storage/regulars.js";
 import { makeDynamicRuleStore } from "./shell/storage/rules.js";
-import { executeActions, toMessageInput } from "./shell/telegram.js";
+import { executeActions, toMessageInput, withoutPhotos } from "./shell/telegram.js";
 import { startTyping } from "./shell/typing.js";
 
 const config = loadConfig();
@@ -32,11 +33,13 @@ const llmCallStore = makeLlmCallStore(db);
 const regularsStore = makeRegularsStore(db);
 const optOutsStore = makeOptOutsStore(db);
 const instructionStore = makeInstructionStore(db);
+const ignoredUsersStore = makeIgnoredUsersStore(db);
 const chatSettings = makeChatSettingsStore(db);
 const profileRefreshInProgress = new Set<number>();
 log.info({ dbPath: config.DB_PATH }, "database opened");
 log.info({ count: regularsStore.list().length }, "regulars loaded");
 log.info({ count: optOutsStore.list().length }, "profile opt-outs loaded");
+log.info({ count: ignoredUsersStore.list().length }, "ignored users loaded");
 
 const insults = loadInsults("./data/insults.json", log);
 log.info({ count: insults.length }, "insults loaded");
@@ -107,6 +110,7 @@ const invokeLlmDeps: InvokeLlmDeps = {
   recentContextSize: 10,
   regularsStore,
   instructionStore,
+  isIgnored: (userId) => ignoredUsersStore.isIgnored(userId),
   rng: Math.random,
   log,
   visionEnabled: config.KYTSUNIA_VISION_ENABLED,
@@ -185,7 +189,9 @@ bot.on("message", async (ctx) => {
   const input = toMessageInput(ctx);
   if (!input) return;
 
-  appendMessage(input);
+  // Текст ігнорованого лишається в базі, щоб розмова не втрачала людину, а
+  // от його фото моделі бачити не треба — посилання на них не зберігаємо.
+  appendMessage(ignoredUsersStore.isIgnored(input.senderId) ? withoutPhotos(input) : input);
 
   log.debug(
     {
@@ -202,6 +208,7 @@ bot.on("message", async (ctx) => {
       ...(bot.botInfo.username ? { botUsername: bot.botInfo.username } : {}),
     },
     optedOutUserIds: new Set(optOutsStore.list()),
+    ignoredUserIds: new Set(ignoredUsersStore.list().map((u) => u.userId)),
   };
 
   const actions = match(input, state);
@@ -219,6 +226,7 @@ bot.on("message", async (ctx) => {
         invokeRosterDeps,
         optOutsStore,
         regularsStore,
+        ignoredUsersStore,
         instructionStore,
         chatSettings,
         defaultModel: config.LLM_MODEL,

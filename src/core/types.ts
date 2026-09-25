@@ -80,6 +80,10 @@ export type Action =
   | { kind: "reset_digest_max"; replyTo: number; chatId: number }
   // «Розкажи про учасників»: короткий портрет кожного постійного з профілів у базі.
   | { kind: "invoke_roster"; replyTo: number }
+  // Адмінський чорний список: userId з повідомлення, на яке відповіли.
+  | { kind: "ignore_user"; replyTo: number; userId: number; userName: string }
+  | { kind: "unignore_user"; replyTo: number; userId: number; userName: string }
+  | { kind: "list_ignored"; replyTo: number }
   // Адмінське оновлення профілів постійних учасників цього чату.
   | { kind: "refresh_profiles"; replyTo: number; chatId: number };
 
@@ -102,4 +106,6 @@ export type State = {
   dynamic: readonly DynamicRuleSpec[];
   policy: Policy;
   optedOutUserIds: ReadonlySet<number>;
+  // Кого Кицюня ігнорує повністю. Для них працює лише «забудь мене».
+  ignoredUserIds: ReadonlySet<number>;
 };

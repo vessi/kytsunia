@@ -11,6 +11,7 @@ import { refreshProfiles } from "./llm/profile-refresh.js";
 import type { InvokeRosterDeps } from "./llm/roster.js";
 import { invokeRoster } from "./llm/roster.js";
 import type { ChatSettingsStore } from "./storage/chat-settings.js";
+import type { IgnoredUsersStore } from "./storage/ignored.js";
 import type { InstructionStore } from "./storage/instructions.js";
 import type { LlmCallStore } from "./storage/llm-calls.js";
 import type { OptOutsStore } from "./storage/opt-outs.js";
@@ -30,6 +31,7 @@ export type ExecuteDeps = {
   invokeRosterDeps: InvokeRosterDeps;
   optOutsStore: OptOutsStore;
   regularsStore: RegularsStore;
+  ignoredUsersStore: IgnoredUsersStore;
   instructionStore: InstructionStore;
   chatSettings: ChatSettingsStore;
   defaultModel: string;
@@ -94,6 +96,17 @@ export function toMessageInput(ctx: Context): MessageInput | null {
       : {}),
     ...(m.media_group_id ? { mediaGroupId: m.media_group_id } : {}),
   };
+}
+
+/**
+ * Повідомлення ігнорованого зберігаємо, але без посилань на фото: текст
+ * потрібен контексту й дайджесту (вийняти людину з розмови — дайджест
+ * попливе), а картинки моделі бачити не треба. Без photo_file_id рядок не
+ * підхоплять ні TTL-fallback, ні альбом, ні прохід по ланцюжку відповідей.
+ */
+export function withoutPhotos(input: MessageInput): MessageInput {
+  const { photoFileId: _f, photoUniqueId: _u, mediaGroupId: _g, ...rest } = input;
+  return rest;
 }
 
 function detectKind(m: NonNullable<Context["message"]>): MessageKind {
@@ -314,6 +327,33 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       const text = had
         ? `Повернула стелю за замовчуванням: ${deps.digestMaxCount} повідомлень.`
         : `Тут і так стеля за замовчуванням: ${deps.digestMaxCount} повідомлень.`;
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "ignore_user": {
+      const added = deps.ignoredUsersStore.add(
+        action.userId,
+        action.userName,
+        ctx.from?.id ?? null,
+      );
+      const name = action.userName || String(action.userId);
+      const text = added ? `Добре, ${name} для мене більше не існує.` : `${name} і так у списку.`;
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "unignore_user": {
+      const removed = deps.ignoredUsersStore.remove(action.userId);
+      const name = action.userName || String(action.userId);
+      const text = removed ? `Гаразд, ${name} знову чую.` : `${name} я і так не ігнорувала.`;
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "list_ignored": {
+      const all = deps.ignoredUsersStore.list();
+      const text =
+        all.length === 0
+          ? "Нікого не ігнорую."
+          : all.map((u) => `${u.userName || "?"} (${u.userId})`).join("\n");
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }
