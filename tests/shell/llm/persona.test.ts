@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPersonaPrompt,
+  DIGEST_PROMPT,
   modelDisplayName,
+  OPSEC_RULES,
   PERSONA_PROMPT,
 } from "../../../src/shell/llm/persona.js";
+import { PROFILE_GENERATOR_PROMPT } from "../../../src/shell/llm/profile-refresh.js";
+import { ROSTER_PROMPT } from "../../../src/shell/llm/roster.js";
 
 const base = {
   model: "claude-haiku-4-5-20251001",
@@ -36,6 +40,21 @@ describe("buildPersonaPrompt: character override", () => {
     expect(prompt.startsWith("Ти сумна сова.\n\nХто ти технічно:")).toBe(true);
     expect(prompt).not.toContain(PERSONA_PROMPT);
     expect(prompt).toContain("Що ти вмієш і чого не вмієш:");
+  });
+
+  it("keeps the OPSEC rules even with a custom character", () => {
+    const prompt = buildPersonaPrompt({ ...base, character: "Ти сумна сова." });
+    expect(prompt).toContain(OPSEC_RULES);
+    expect(prompt.indexOf(OPSEC_RULES)).toBeGreaterThan(prompt.indexOf("Що ти вмієш"));
+  });
+});
+
+describe("OPSEC rules in every prompt", () => {
+  it("are part of the default persona, the digest, the roster and the profile generator", () => {
+    expect(buildPersonaPrompt(base)).toContain("хто в чаті військовий");
+    expect(DIGEST_PROMPT).toContain("не переказуй, хто служить");
+    expect(ROSTER_PROMPT).toContain("нічого про службу");
+    expect(PROFILE_GENERATOR_PROMPT).toContain("Військову службу");
   });
 });
 

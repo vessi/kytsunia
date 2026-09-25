@@ -22,7 +22,12 @@ export const PROFILE_GENERATOR_PROMPT = `Ти створюєш короткий 
 - Інтимні стосунки
 - Релігійні погляди (крім явно й публічно висловлених у цьому чаті)
 - Сексуальну орієнтацію
+- Військову службу, теперішню чи минулу: підрозділ, звання, ротації, відпустки, поранення
+- Місцеперебування, переїзди, поїздки, де людина живе
+- Роботу в обороні, на критичній інфраструктурі чи в органах влади
+- Службу чи місцеперебування близьких
 - Будь-що, що людина явно вважала б приватним
+Про службу й місцеперебування — навіть якщо людина сама писала про це відкрито: профіль зберігається надовго, читається в кожній відповіді бота і не має бути довідником, хто де. Замість цього можна написати лише «має чітку громадянську позицію», якщо це видно.
 
 Формат: суцільний текст українською, 100-250 слів. Без переліків, заголовків, markdown.
 
@@ -30,6 +35,19 @@ export const PROFILE_GENERATOR_PROMPT = `Ти створюєш короткий 
 
 // 100–250 слів українською ≈ 600–800 токенів; даємо запас, щоб не обрізало.
 const PROFILE_MAX_TOKENS = 1500;
+
+/**
+ * Запобіжник поверх промпту: якщо модель усе ж написала про службу чи
+ * підрозділ, профіль переписуємо ще раз, а якщо і вдруге — не зберігаємо.
+ * Регекс навмисно вузький: «фронтенд», «служба підтримки» і «новини війни»
+ * ловити не треба. Це не фільтр, а страховка від грубих промахів.
+ */
+export const OPSEC_PATTERN =
+  /\bзсу\b|\bтро\b|\bнгу\b|\bдшв\b|\bссо\b|військов|бригад|батальйон|ротаці|мобілізов|мобілізац|підрозділ|окоп|бойов|штурмов|піхот|артилер|служить у|на службі|в армії|на фронт(?!енд)|позивн/i;
+
+const OPSEC_REWRITE_NOTE = `
+
+Увага: у попередній версії цього профілю було щось із забороненого списку про службу, підрозділи чи місцеперебування. Перепиши профіль без жодної згадки про це, навіть непрямої.`;
 
 export type RefreshCandidate = {
   userId: number;
@@ -62,6 +80,8 @@ export type RefreshResult = {
   failed: number;
   // Пропущені через opt-out.
   skipped: number;
+  // Відкинуті запобіжником OPSEC після повторної спроби.
+  filtered: number;
   totalCostUsd: number;
 };
 
@@ -151,6 +171,7 @@ export async function refreshProfiles(
     processed: 0,
     failed: 0,
     skipped: all.length - candidates.length,
+    filtered: 0,
     totalCostUsd: 0,
   };
   deps.log.info(
@@ -186,40 +207,60 @@ export async function refreshProfiles(
       weight: 0,
     };
     try {
-      const reply = await deps.llmClient.reply(
-        PROFILE_GENERATOR_PROMPT,
-        userMessage,
-        opts.model,
-        PROFILE_MAX_TOKENS,
-      );
-      const cost =
-        calculateCost(opts.model, {
+      const generate = async (message: string) => {
+        const reply = await deps.llmClient.reply(
+          PROFILE_GENERATOR_PROMPT,
+          message,
+          opts.model,
+          PROFILE_MAX_TOKENS,
+        );
+        const cost =
+          calculateCost(opts.model, {
+            inputTokens: reply.inputTokens,
+            outputTokens: reply.outputTokens,
+            cacheReadTokens: reply.cacheReadTokens,
+            cacheWriteTokens: reply.cacheWriteTokens,
+          }) ?? 0;
+        result.totalCostUsd += cost;
+        deps.llmCallStore.record({
+          ...record,
+          status: "ok",
           inputTokens: reply.inputTokens,
           outputTokens: reply.outputTokens,
           cacheReadTokens: reply.cacheReadTokens,
           cacheWriteTokens: reply.cacheWriteTokens,
-        }) ?? 0;
-      result.totalCostUsd += cost;
-      deps.llmCallStore.record({
-        ...record,
-        status: "ok",
-        inputTokens: reply.inputTokens,
-        outputTokens: reply.outputTokens,
-        cacheReadTokens: reply.cacheReadTokens,
-        cacheWriteTokens: reply.cacheWriteTokens,
-        costUsd: cost,
-      });
+          costUsd: cost,
+        });
+        return { text: reply.text, cost };
+      };
+
+      let { text, cost } = await generate(userMessage);
+      if (OPSEC_PATTERN.test(text)) {
+        deps.log.warn(
+          { userId: cand.userId, chatId: cand.chatId },
+          "profile hit OPSEC filter, rewriting",
+        );
+        ({ text, cost } = await generate(userMessage + OPSEC_REWRITE_NOTE));
+        if (OPSEC_PATTERN.test(text)) {
+          deps.log.warn(
+            { userId: cand.userId, chatId: cand.chatId },
+            "profile dropped by OPSEC filter",
+          );
+          result.filtered += 1;
+          continue;
+        }
+      }
       deps.log.info(
         { userId: cand.userId, chatId: cand.chatId, cost: cost.toFixed(5) },
         "profile generated",
       );
-      opts.onProfile?.(cand, reply.text, cost);
+      opts.onProfile?.(cand, text, cost);
       if (!opts.dryRun) {
         deps.regularsStore.upsert({
           userId: cand.userId,
           chatId: cand.chatId,
           displayName: cand.userName,
-          profile: reply.text,
+          profile: text,
           messageCount: cand.messageCount,
           lastMessageTs: cand.lastMessageTs,
         });

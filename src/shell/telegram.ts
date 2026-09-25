@@ -343,6 +343,7 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
           ];
           if (r.failed > 0) parts.push(`Не вийшло: ${r.failed}.`);
           if (r.skipped > 0) parts.push(`Пропустила (просили не профайлити): ${r.skipped}.`);
+          if (r.filtered > 0) parts.push(`Відкинула через OPSEC: ${r.filtered}.`);
           if (r.processed > 0) parts.push(`Коштувало $${r.totalCostUsd.toFixed(3)}.`);
           return api.sendMessage(action.chatId, parts.join(" "), {
             reply_parameters: { message_id: action.replyTo },

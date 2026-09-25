@@ -5,6 +5,7 @@ import type { LlmClient, LlmReply } from "../../../src/shell/llm/anthropic.js";
 import {
   buildProfileRequest,
   findCandidates,
+  OPSEC_PATTERN,
   PROFILE_GENERATOR_PROMPT,
   refreshProfiles,
 } from "../../../src/shell/llm/profile-refresh.js";
@@ -121,6 +122,7 @@ describe("profile refresh", () => {
       processed: 2,
       failed: 0,
       skipped: 0,
+      filtered: 0,
       totalCostUsd: expect.any(Number),
     });
     expect(result.totalCostUsd).toBeGreaterThan(0);
@@ -176,11 +178,60 @@ describe("profile refresh", () => {
     expect(d.regularsStore.get(10, 1)).toBeNull();
   });
 
+  describe("OPSEC backstop", () => {
+    it("flags service markers and leaves civilian look-alikes alone", () => {
+      for (const text of [
+        "Служить у ЗСУ з 2022 року.",
+        "Розповідає про побут у 47 бригаді.",
+        "Зараз на ротації, пише рідко.",
+        "Працює у підрозділі звʼязку.",
+        "Має позивний Сова.",
+      ]) {
+        expect(OPSEC_PATTERN.test(text), text).toBe(true);
+      }
+      for (const text of [
+        "Фронтенд-розробник, любить React.",
+        "Скаржиться на службу підтримки банку.",
+        "Гостро реагує на новини війни, підтримує Україну.",
+        "Служить прикладом для інших у чаті.",
+        "Дуже бойкотує російський контент.",
+      ]) {
+        expect(OPSEC_PATTERN.test(text), text).toBe(false);
+      }
+    });
+
+    it("rewrites once and stores the clean version", async () => {
+      seed(1, 10, "Andriy", 6);
+      const replies = ["Служить у ЗСУ, пише коротко.", "Пише коротко."];
+      const client: LlmClient = {
+        reply: async (_s, content): Promise<LlmReply> => {
+          const text = replies.shift() ?? "";
+          if (replies.length === 0) expect(content).toContain("Перепиши профіль");
+          return { text, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 };
+        },
+      };
+      const d = deps(client);
+      const result = await refreshProfiles(d, { ...opts, chatId: 1 });
+      expect(result).toMatchObject({ processed: 1, filtered: 0 });
+      expect(d.regularsStore.get(10, 1)?.profile).toBe("Пише коротко.");
+    });
+
+    it("drops the profile when the rewrite still leaks", async () => {
+      seed(1, 10, "Andriy", 6);
+      const llm = fakeLlm("Зараз на ротації.");
+      const d = deps(llm.client);
+      const result = await refreshProfiles(d, { ...opts, chatId: 1 });
+      expect(result).toMatchObject({ processed: 0, filtered: 1, failed: 0 });
+      expect(llm.calls).toHaveLength(2);
+      expect(d.regularsStore.get(10, 1)).toBeNull();
+    });
+  });
+
   it("returns zeros when nobody qualifies", async () => {
     seed(1, 10, "Andriy", 2);
     const llm = fakeLlm();
     const result = await refreshProfiles(deps(llm.client), { ...opts, chatId: 1 });
-    expect(result).toEqual({ processed: 0, failed: 0, skipped: 0, totalCostUsd: 0 });
+    expect(result).toEqual({ processed: 0, failed: 0, skipped: 0, filtered: 0, totalCostUsd: 0 });
     expect(llm.calls).toHaveLength(0);
   });
 });
