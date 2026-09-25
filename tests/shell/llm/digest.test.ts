@@ -145,9 +145,20 @@ describe("truncateForTelegram", () => {
 });
 
 describe("buildDigestRequest", () => {
-  it("puts the prompt in system without a cache breakpoint", () => {
+  it("puts the prompt in system without a cache breakpoint when there are no profiles", () => {
     const { system } = buildDigestRequest([row()], "PROMPT");
     expect(system).toEqual([{ type: "text", text: "PROMPT" }]);
+  });
+
+  it("adds the chat profiles as a cached block after the prompt", () => {
+    const { system } = buildDigestRequest([row()], "PROMPT", [
+      { displayName: "Olha", profile: "Бігає." },
+    ]);
+    expect(system).toHaveLength(2);
+    expect(system[0]).toEqual({ type: "text", text: "PROMPT" });
+    expect(system[1]?.text).toContain("Профілі учасників");
+    expect(system[1]?.text).toContain("Olha:\nБігає.");
+    expect(system[1]?.cache_control).toEqual({ type: "ephemeral" });
   });
 
   it("puts the transcript and the message count in the user message", () => {
@@ -197,6 +208,15 @@ describe("invokeDigest", () => {
       log: silentLog,
       startTyping: vi.fn(() => vi.fn()),
       instructionStore: { list: vi.fn(() => []), add: vi.fn(), remove: vi.fn() },
+      regularsStore: {
+        upsert: vi.fn(),
+        get: vi.fn(),
+        list: vi.fn(() => []),
+        listByChat: vi.fn(() => []),
+        remove: vi.fn(),
+        removeAllForUser: vi.fn(),
+        setManualNotes: vi.fn(),
+      },
       chatSettings: {
         getModel: vi.fn(() => null),
         setModel: vi.fn(),
@@ -245,6 +265,29 @@ describe("invokeDigest", () => {
     expect(system[0]?.text).toBe(
       "PROMPT\n\nСпеціальні інструкції від адміна для цього чату. Якщо вони суперечать правилам вище — виконуй інструкції:\n- Не згадуй Олю.",
     );
+  });
+
+  it("hands every profile of the chat to the model", async () => {
+    const { ctx } = makeCtx();
+    const llm = makeFakeLlm();
+    seed(10);
+    const deps = makeDeps({ llmClient: llm.client });
+    (deps.regularsStore.listByChat as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        userId: 8,
+        chatId: 1,
+        displayName: "Olha",
+        profile: "Бігає.",
+        messageCount: 50,
+        lastMessageTs: 0,
+        generatedAt: 0,
+        manualNotes: null,
+      },
+    ]);
+    await invokeDigest(ctx, 999, undefined, deps);
+    expect(deps.regularsStore.listByChat).toHaveBeenCalledWith(1);
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system.map((b) => b.text).join("\n")).toContain("Olha:\nБігає.");
   });
 
   it("uses the chat's digest model, ignoring the chat's reply model", async () => {

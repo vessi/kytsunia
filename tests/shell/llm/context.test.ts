@@ -13,16 +13,17 @@ describe("buildLlmRequest", () => {
     expect(req.userMessage).toBe("Andriy: привіт");
   });
 
-  it("puts cache_control on persona block only", () => {
+  it("puts cache_control on the persona and profile blocks, not on the tail", () => {
     const req = buildLlmRequest(
       { senderName: "Andriy", text: "привіт" },
       [{ senderName: "Olha", text: "тут" }],
       "PERSONA",
       [{ displayName: "Andriy", profile: "PROFILE" }],
     );
-    expect(req.system).toHaveLength(2);
+    expect(req.system).toHaveLength(3);
     expect(req.system[0]?.cache_control).toEqual({ type: "ephemeral" });
-    expect(req.system[1]?.cache_control).toBeUndefined();
+    expect(req.system[1]?.cache_control).toEqual({ type: "ephemeral" });
+    expect(req.system[2]?.cache_control).toBeUndefined();
   });
 
   it("appends recent context after persona", () => {
@@ -41,14 +42,34 @@ describe("buildLlmRequest", () => {
     expect(req.userMessage).toBe("Andriy: привіт");
   });
 
-  it("includes profiles section when profiles provided", () => {
+  it("puts profiles into their own cached block right after the persona", () => {
     const req = buildLlmRequest({ senderName: "Andriy", text: "привіт" }, [], "PERSONA", [
       { displayName: "Andriy", profile: "Snarky engineer." },
     ]);
-    const text = joinSystem(req.system);
-    expect(text).toContain("PERSONA");
-    expect(text).toContain("Профілі учасників");
-    expect(text).toContain("Snarky engineer.");
+    expect(req.system[0]?.text).toBe("PERSONA");
+    expect(req.system[1]?.text).toContain("Профілі учасників");
+    expect(req.system[1]?.text).toContain("Andriy:\nSnarky engineer.");
+    expect(req.system[1]?.cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("adds no profiles block when there are no profiles", () => {
+    const req = buildLlmRequest({ senderName: "Andriy", text: "привіт" }, [], "PERSONA");
+    expect(req.system).toHaveLength(1);
+  });
+
+  it("keeps the volatile tail out of the cached prefix", () => {
+    const req = buildLlmRequest(
+      { senderName: "Andriy", text: "?" },
+      [{ senderName: "Olha", text: "тут" }],
+      "PERSONA",
+      [{ displayName: "Andriy", profile: "PROFILE" }],
+      [],
+      1_000_000,
+    );
+    expect(req.system).toHaveLength(3);
+    expect(req.system[2]?.cache_control).toBeUndefined();
+    expect(req.system[2]?.text).toContain("Контекст");
+    expect(req.system[2]?.text).not.toContain("PROFILE");
   });
 
   it("orders sections persona → profiles → recent", () => {
@@ -134,10 +155,11 @@ describe("buildLlmRequest", () => {
       [{ displayName: "Andriy", profile: "PROFILE" }],
     );
     // Persona не повинна мати в собі ні profile, ні recent — щоб кеш-префікс
-    // не зсувався при кожному повідомленні.
+    // не зсувався при кожному повідомленні. Профілі — свій блок, recent — хвіст.
     expect(req.system[0]?.text).toBe("PERSONA");
     expect(req.system[1]?.text).toContain("PROFILE");
-    expect(req.system[1]?.text).toContain("Контекст");
+    expect(req.system[1]?.text).not.toContain("Контекст");
+    expect(req.system[2]?.text).toContain("Контекст");
   });
 
   // ─── Vision ──────────────────────────────────────────────────────────

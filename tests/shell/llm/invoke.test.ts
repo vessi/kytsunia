@@ -112,7 +112,6 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     defaultDailyLimit: 100,
     globalDailyCap: 1000,
     recentContextSize: 10,
-    profilesLimit: 5,
     regularsStore,
     instructionStore: { list: vi.fn(() => []), add: vi.fn(), remove: vi.fn() },
     rng: () => 0,

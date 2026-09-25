@@ -5,11 +5,13 @@ import type { Db } from "../storage/db.js";
 import type { InstructionStore } from "../storage/instructions.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
 import { getRecentMessages, type RecentMessageRow } from "../storage/messages.js";
+import type { RegularsStore } from "../storage/regulars.js";
 import { formatKyivDate, formatKyivTime } from "../time.js";
 import type { TypingStarter } from "../typing.js";
 import type { LlmClient, SystemBlock } from "./anthropic.js";
 import { withSpecialInstructions } from "./persona.js";
 import { calculateCost } from "./pricing.js";
+import { collectChatProfiles, type ProfileEntry, renderProfilesBlock } from "./profiles.js";
 
 // Дайджест довший за звичайний реплай: 3-7 пунктів + репліка від себе.
 // Модель для дайджесту — з thinking, тож у бюджет закладено і роздуми.
@@ -42,6 +44,8 @@ export type InvokeDigestDeps = {
   instructionStore: InstructionStore;
   // Стеля повідомлень на чат: замінює maxCount, якщо задана, і вгору теж.
   chatSettings: ChatSettingsStore;
+  // Профілі постійних учасників: дайджест знає, хто є хто.
+  regularsStore: RegularsStore;
 };
 
 /**
@@ -90,11 +94,17 @@ export function renderTranscript(rows: readonly RecentMessageRow[]): string {
 export function buildDigestRequest(
   rows: readonly RecentMessageRow[],
   prompt: string,
+  profiles: readonly ProfileEntry[] = [],
 ): { system: SystemBlock[]; userMessage: string } {
-  // Без cache_control: промпт дайджесту короткий (менше мінімального
-  // кешованого префікса), а вся вага — у транскрипті, який щоразу інший.
-  // Ставити брейкпойнт тут — no-op, який лише заплутує.
+  // Промпт сам по собі коротший за мінімальний кешований префікс, тож
+  // брейкпойнт ставимо на профілях: разом з ними префікс уже вартий кешу, а
+  // змінюються вони лише після «онови профілі». Транскрипт щоразу інший —
+  // він у user message без кешу.
   const system: SystemBlock[] = [{ type: "text", text: prompt }];
+  const profilesBlock = renderProfilesBlock(profiles);
+  if (profilesBlock) {
+    system.push({ type: "text", text: profilesBlock, cache_control: { type: "ephemeral" } });
+  }
   const userMessage = `Ось останні ${rows.length} повідомлень чату:\n\n${renderTranscript(
     rows,
   )}\n\nЗроби дайджест.`;
@@ -180,7 +190,8 @@ export async function invokeDigest(
     deps.prompt,
     deps.instructionStore.list(chatId).map((i) => i.text),
   );
-  const { system, userMessage } = buildDigestRequest(rows, prompt);
+  const profiles = collectChatProfiles(deps.regularsStore, chatId);
+  const { system, userMessage } = buildDigestRequest(rows, prompt, profiles);
   const stopTyping = deps.startTyping(ctx);
 
   try {

@@ -105,7 +105,6 @@ const invokeLlmDeps: InvokeLlmDeps = {
   defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
   globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
   recentContextSize: 10,
-  profilesLimit: 5,
   regularsStore,
   instructionStore,
   rng: Math.random,
@@ -145,6 +144,7 @@ const invokeDigestDeps: InvokeDigestDeps = {
   startTyping,
   instructionStore,
   chatSettings,
+  regularsStore,
 };
 
 const invokeRosterDeps: InvokeRosterDeps = {

@@ -15,7 +15,7 @@ import { type LlmClient, type ReplySource, webSearchTool } from "./anthropic.js"
 import { buildLlmRequest, type RecentMessage } from "./context.js";
 import { withSpecialInstructions } from "./persona.js";
 import { calculateCost } from "./pricing.js";
-import { collectProfiles } from "./profiles.js";
+import { collectChatProfiles } from "./profiles.js";
 import type { FetchedPhoto, PhotoFetcher } from "./telegram-photos.js";
 import { collectThread, replyTargetFromMessage } from "./thread.js";
 
@@ -34,7 +34,6 @@ export type InvokeLlmDeps = {
   defaultDailyLimit: number;
   globalDailyCap: number;
   recentContextSize: number;
-  profilesLimit: number;
   regularsStore: RegularsStore;
   // Спеціальні інструкції адміна для чату, дописуються до персони.
   instructionStore: InstructionStore;
@@ -338,13 +337,9 @@ export async function invokeLlmReply(
 
     // 4. Зібрати recent context (логічні повідомлення з альбомами вже згрупованими).
     const recentRows = getRecentMessages(deps.db, chatId, deps.recentContextSize, replyTo);
-    const profiles = collectProfiles(
-      deps.regularsStore,
-      userId,
-      chatId,
-      recentRows,
-      deps.profilesLimit,
-    );
+    // Усі профілі чату, не лише авторів останніх повідомлень: інакше «що
+    // думаєш про Олю?» приходить без Олі, щойно вона хвилину помовчала.
+    const profiles = collectChatProfiles(deps.regularsStore, chatId);
     // Гілка, на яку відповідають: без неї «а чому саме так?» у reply на давню
     // репліку приходить до моделі без самої репліки.
     const replyMessage = ctx.message?.reply_to_message;

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectProfiles } from "../../../src/shell/llm/profiles.js";
-import type { RecentMessageRow } from "../../../src/shell/storage/messages.js";
+import { collectChatProfiles, renderProfilesBlock } from "../../../src/shell/llm/profiles.js";
 import type { RegularProfile, RegularsStore } from "../../../src/shell/storage/regulars.js";
 
 function makeMockStore(profiles: RegularProfile[]): RegularsStore {
@@ -9,7 +8,11 @@ function makeMockStore(profiles: RegularProfile[]): RegularsStore {
   return {
     get: (userId, chatId) => map.get(key(userId, chatId)) ?? null,
     list: () => [...map.values()],
-    listByChat: (chatId) => [...map.values()].filter((p) => p.chatId === chatId),
+    // Як у справжньому сховищі: за активністю, від найбільшої.
+    listByChat: (chatId) =>
+      [...map.values()]
+        .filter((p) => p.chatId === chatId)
+        .sort((a, b) => b.messageCount - a.messageCount),
     upsert: () => {
       // noop in mock
     },
@@ -26,82 +29,61 @@ function makeProfile(
   chatId: number,
   name: string,
   profile: string,
+  extra: Partial<RegularProfile> = {},
 ): RegularProfile {
   return {
     userId,
     chatId,
     displayName: name,
     profile,
-    messageCount: 50,
-    lastMessageTs: 1000,
-    generatedAt: 2000,
+    messageCount: 10,
+    lastMessageTs: null,
+    generatedAt: 0,
     manualNotes: null,
+    ...extra,
   };
 }
 
-function makeMessage(senderId: number, senderName: string): RecentMessageRow {
-  return { ts: 1, senderId, senderName, text: "x", kind: "text", photos: [], mediaGroupId: null };
-}
-
-describe("collectProfiles", () => {
-  it("returns empty when no profiles match", () => {
-    const store = makeMockStore([]);
-    expect(collectProfiles(store, 999, 1, [], 5)).toEqual([]);
+describe("collectChatProfiles", () => {
+  it("returns empty when the chat has no profiles", () => {
+    expect(collectChatProfiles(makeMockStore([]), 1)).toEqual([]);
   });
 
-  it("includes sender profile first", () => {
-    const store = makeMockStore([makeProfile(100, 1, "Sender", "p1")]);
-    const result = collectProfiles(store, 100, 1, [], 5);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.displayName).toBe("Sender");
-  });
-
-  it("adds recent senders sorted by activity, after sender", () => {
+  it("returns every profile of the chat, most active first, regardless of who is talking", () => {
     const store = makeMockStore([
-      makeProfile(100, 1, "S", "sp"),
-      makeProfile(200, 1, "A", "ap"),
-      makeProfile(300, 1, "B", "bp"),
+      makeProfile(100, 1, "Quiet", "q", { messageCount: 5 }),
+      makeProfile(101, 1, "Loud", "l", { messageCount: 50 }),
+      makeProfile(102, 2, "Elsewhere", "e", { messageCount: 500 }),
     ]);
-    const recent = [makeMessage(200, "A"), makeMessage(200, "A"), makeMessage(300, "B")];
-    const result = collectProfiles(store, 100, 1, recent, 5);
-    expect(result.map((p) => p.displayName)).toEqual(["S", "A", "B"]);
+    expect(collectChatProfiles(store, 1).map((p) => p.displayName)).toEqual(["Loud", "Quiet"]);
   });
 
-  it("respects limit", () => {
+  it("appends manual notes to the profile text", () => {
     const store = makeMockStore([
-      makeProfile(100, 1, "S", "x"),
-      makeProfile(200, 1, "A", "x"),
-      makeProfile(300, 1, "B", "x"),
+      makeProfile(100, 1, "Olha", "Бігає.", { manualNotes: "Без «тітко»." }),
     ]);
-    const recent = [makeMessage(200, "A"), makeMessage(300, "B")];
-    expect(collectProfiles(store, 100, 1, recent, 2)).toHaveLength(2);
+    expect(collectChatProfiles(store, 1)[0]?.profile).toBe(
+      "Бігає.\n\nДодаткові примітки: Без «тітко».",
+    );
   });
 
-  it("skips users without profiles", () => {
-    const store = makeMockStore([makeProfile(100, 1, "S", "sp")]);
-    const recent = [makeMessage(999, "Unknown")];
-    const result = collectProfiles(store, 100, 1, recent, 5);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.displayName).toBe("S");
+  it("falls back to Unknown without a display name", () => {
+    const store = makeMockStore([makeProfile(100, 1, "x", "p", { displayName: null })]);
+    expect(collectChatProfiles(store, 1)[0]?.displayName).toBe("Unknown");
+  });
+});
+
+describe("renderProfilesBlock", () => {
+  it("is empty without profiles", () => {
+    expect(renderProfilesBlock([])).toBe("");
   });
 
-  it("appends manual notes to profile", () => {
-    const profile = makeProfile(100, 1, "S", "Base.");
-    profile.manualNotes = "Special.";
-    const store = makeMockStore([profile]);
-    const result = collectProfiles(store, 100, 1, [], 5);
-    expect(result[0]?.profile).toContain("Base.");
-    expect(result[0]?.profile).toContain("Special.");
-  });
-
-  it("isolates profiles by chat", () => {
-    const store = makeMockStore([
-      makeProfile(100, 1, "S in chat 1", "Description for chat 1"),
-      makeProfile(100, 2, "S in chat 2", "Description for chat 2"),
-    ]);
-    const result = collectProfiles(store, 100, 1, [], 5);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.profile).toContain("chat 1");
-    expect(result[0]?.profile).not.toContain("chat 2");
+  it("renders a header and one entry per person", () => {
+    expect(
+      renderProfilesBlock([
+        { displayName: "A", profile: "a" },
+        { displayName: "B", profile: "b" },
+      ]),
+    ).toBe("Профілі учасників (для розуміння стилю і інтересів):\n\nA:\na\n\nB:\nb");
   });
 });
