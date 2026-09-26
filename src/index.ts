@@ -4,6 +4,7 @@ import { match } from "./core/matcher.js";
 import type { State } from "./core/types.js";
 import { loadInsults } from "./shell/insults.js";
 import { makeLlmClient } from "./shell/llm/anthropic.js";
+import { makePhotoDescriber } from "./shell/llm/describe-photo.js";
 import type { InvokeDigestDeps } from "./shell/llm/digest.js";
 import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
 import { buildPersonaPrompt, DIGEST_PROMPT, SEARCH_PROMPT } from "./shell/llm/persona.js";
@@ -18,6 +19,7 @@ import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
 import { makeMessageAppender, makeMessageEditor } from "./shell/storage/messages.js";
 import { makeOptOutsStore } from "./shell/storage/opt-outs.js";
 import { makePhotoCacheStore } from "./shell/storage/photo-cache.js";
+import { makePhotoDescriptionStore } from "./shell/storage/photo-descriptions.js";
 import { makeRegularsStore } from "./shell/storage/regulars.js";
 import { makeDynamicRuleStore } from "./shell/storage/rules.js";
 import { executeActions, toMessageInput, withoutPhotos } from "./shell/telegram.js";
@@ -48,6 +50,7 @@ const dynamicRuleStore = makeDynamicRuleStore(db, log);
 const appendMessage = makeMessageAppender(db);
 const editMessage = makeMessageEditor(db);
 const photoCacheStore = makePhotoCacheStore(db);
+const photoDescriptionStore = makePhotoDescriptionStore(db);
 
 const llmClient = makeLlmClient(config.ANTHROPIC_API_KEY);
 
@@ -56,6 +59,15 @@ const photoFetcher = makePhotoFetcher({
   api: bot.api,
   botToken: config.BOT_TOKEN,
   cache: photoCacheStore,
+});
+
+const describePhoto = makePhotoDescriber({
+  llmClient,
+  llmCallStore,
+  store: photoDescriptionStore,
+  photoFetcher,
+  model: config.KYTSUNIA_PHOTO_DESCRIBE_MODEL,
+  log,
 });
 
 log.info({ model: config.LLM_MODEL }, "llm client ready");
@@ -119,7 +131,8 @@ const invokeLlmDeps: InvokeLlmDeps = {
   maxPhotosPerAlbum: config.KYTSUNIA_MAX_PHOTOS_PER_ALBUM,
   albumDebounceMs: config.KYTSUNIA_VISION_ALBUM_DEBOUNCE_MS,
   threadDepth: config.KYTSUNIA_VISION_THREAD_DEPTH,
-  ttlMs: config.KYTSUNIA_VISION_TTL_MS,
+  describePhoto,
+  describeMaxPerReply: config.KYTSUNIA_PHOTO_DESCRIBE_MAX_PER_REPLY,
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   now: () => Date.now(),
   appendMessage,
@@ -150,6 +163,7 @@ const invokeDigestDeps: InvokeDigestDeps = {
   chatSettings,
   regularsStore,
   botUserId,
+  photoDescriptions: photoDescriptionStore,
 };
 
 const invokeRosterDeps: InvokeRosterDeps = {

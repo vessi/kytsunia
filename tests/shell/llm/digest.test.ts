@@ -106,6 +106,18 @@ describe("renderTranscript", () => {
     expect(lines.filter((l) => l.startsWith("---"))).toHaveLength(2);
   });
 
+  it("uses cached descriptions in photo markers when available", () => {
+    const text = renderTranscript(
+      [
+        row({ photos: [{ fileId: "f", uniqueId: "u1" }] }),
+        row({ photos: [{ fileId: "g", uniqueId: "u2" }] }),
+      ],
+      (id) => (id === "u1" ? "сінабон" : null),
+    );
+    expect(text).toContain("[фото: сінабон]");
+    expect(text).toContain("[фото] ");
+  });
+
   it("marks photos without sending them", () => {
     const single = renderTranscript([
       row({ photos: [{ fileId: "f", uniqueId: "u" }], text: "оце" }),

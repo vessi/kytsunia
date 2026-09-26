@@ -13,6 +13,7 @@ import type { RegularsStore } from "../storage/regulars.js";
 import type { TypingStarter } from "../typing.js";
 import { type LlmClient, type ReplySource, webSearchTool } from "./anthropic.js";
 import { buildLlmRequest, type RecentMessage } from "./context.js";
+import type { PhotoDescriber } from "./describe-photo.js";
 import { withSpecialInstructions } from "./persona.js";
 import { calculateCost } from "./pricing.js";
 import { collectChatProfiles } from "./profiles.js";
@@ -49,7 +50,10 @@ export type InvokeLlmDeps = {
   maxPhotosPerAlbum: number;
   albumDebounceMs: number;
   threadDepth: number;
-  ttlMs: number;
+  // Описи фото з історії: замість живої картинки модель бачить текст.
+  describePhoto: PhotoDescriber;
+  // Скільки нових описів генерувати за одну відповідь (кешовані не рахуються).
+  describeMaxPerReply: number;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   // Persistence: зберігаємо власні відповіді Кицюні в DB, щоб reply-chain
@@ -201,41 +205,6 @@ function collectReplyTargetPhotos(ctx: Context, db: Db, maxDepth: number): Photo
 }
 
 /**
- * Останнє фото в чаті за останні ttlMs мілісекунд. Запасний канал, коли тригер
- * без фото, без reply, але хтось щойно постив фото і користувач явно говорить
- * саме про нього («@kytsynia що це?»). Короткий TTL — захист від recency-bias.
- */
-function collectRecentPhotoFallback(
-  db: Db,
-  chatId: number,
-  ttlMs: number,
-  now: number,
-): PhotoRef[] {
-  if (ttlMs <= 0) return [];
-  const since = now - ttlMs;
-  const stmt = db.prepare(`
-    SELECT msg_id, photo_file_id, photo_unique_id, media_group_id
-    FROM messages
-    WHERE chat_id = ? AND ts >= ? AND photo_file_id IS NOT NULL
-    ORDER BY ts DESC
-    LIMIT 1
-  `);
-  const row = stmt.get(chatId, since) as
-    | {
-        msg_id: number;
-        photo_file_id: string;
-        photo_unique_id: string;
-        media_group_id: string | null;
-      }
-    | undefined;
-  if (!row) return [];
-  if (row.media_group_id) {
-    return getAlbumPhotoRefs(db, chatId, row.media_group_id);
-  }
-  return [{ fileId: row.photo_file_id, uniqueId: row.photo_unique_id }];
-}
-
-/**
  * Завантажує фото з Telegram, толерантно до помилок: якщо одне впало (timeout,
  * deleted, etc.) — повертаємо null на його позиції, не валимо весь reply.
  */
@@ -355,8 +324,9 @@ export async function invokeLlmReply(
     // 5. Зібрати фото — ТІЛЬКИ ті, на які явно посилаємось:
     //    - trigger (поточне фото або альбом)
     //    - reply chain (reply_to_message → ... → знайдене фото)
-    //    - TTL fallback: останнє фото в чаті за N секунд, якщо нічого вище не знайшли
-    //    Історичні фото поза цими каналами НЕ підтягуються (recency-photo-bias).
+    //    Фото з історії живими не йдуть ніколи: тільки текстовим описом у
+    //    рядку автора. Жива картинка перетягувала увагу моделі на себе на всі
+    //    відповіді, поки не вийде з вікна.
     const triggerRaw = deps.visionEnabled ? collectTriggerPhotos(ctx, deps.db) : [];
     const replyRaw =
       deps.visionEnabled && !replyFromIgnored
@@ -375,24 +345,8 @@ export async function invokeLlmReply(
     const replyDeduped = replyRaw.filter((p) => !triggerUniqueIds.has(p.uniqueId));
     const replyPhotoRefs = replyDeduped.slice(0, deps.maxPhotosPerAlbum);
 
-    // TTL fallback тільки коли нічого не знайдено в попередніх каналах.
-    let fallbackRefs: PhotoRef[] = [];
-    if (deps.visionEnabled && triggerPhotoRefs.length === 0 && replyPhotoRefs.length === 0) {
-      const raw = collectRecentPhotoFallback(deps.db, chatId, deps.ttlMs, deps.now());
-      fallbackRefs = raw.slice(0, deps.maxPhotosPerAlbum);
-      if (fallbackRefs.length > 0) {
-        deps.log.debug(
-          { count: fallbackRefs.length, ttlMs: deps.ttlMs },
-          "vision: TTL fallback hit",
-        );
-      }
-    }
-
-    // Total cap: trigger > reply chain > TTL fallback.
-    const allRefs = [...triggerPhotoRefs, ...replyPhotoRefs, ...fallbackRefs].slice(
-      0,
-      deps.maxPhotosTotal,
-    );
+    // Total cap: trigger > reply chain.
+    const allRefs = [...triggerPhotoRefs, ...replyPhotoRefs].slice(0, deps.maxPhotosTotal);
 
     // 6. Завантаження байтів (паралельно, толерантно).
     const fetched = await fetchPhotosTolerant(allRefs, deps.photoFetcher, deps.log);
@@ -405,10 +359,33 @@ export async function invokeLlmReply(
       .filter((p): p is FetchedPhoto => p !== null)
       .map((f) => ({ mime: f.mime, base64: f.base64 }));
 
-    const recent: RecentMessage[] = recentRows.map((row) => ({
+    // 8. Історія — текстом. Фото в ній замінюємо описами: кешовані безкоштовно,
+    //    нових за одну відповідь не більше describeMaxPerReply, від найновіших.
+    //    Фото, які вже йдуть живими (тригер, гілка), описувати не треба.
+    const liveUniqueIds = new Set(allRefs.map((p) => p.uniqueId));
+    const describeCtx = { chatId, userId, userName };
+    let describeBudget = deps.visionEnabled ? deps.describeMaxPerReply : 0;
+    const notesByRow = new Map<number, string[]>();
+    for (let i = recentRows.length - 1; i >= 0; i--) {
+      const row = recentRows[i];
+      if (!row) continue;
+      const notes: string[] = [];
+      for (const photo of row.photos.slice(0, deps.maxPhotosPerAlbum)) {
+        if (liveUniqueIds.has(photo.uniqueId)) continue;
+        const described = await deps.describePhoto(photo, describeCtx, {
+          allowGenerate: describeBudget > 0,
+        });
+        if (described?.generated) describeBudget -= 1;
+        if (described) notes.push(described.text);
+      }
+      notesByRow.set(i, notes);
+    }
+    const recent: RecentMessage[] = recentRows.map((row, i) => ({
       senderName: row.senderName,
       text: row.text,
       photos: [],
+      photoNotes: notesByRow.get(i) ?? [],
+      photoCount: row.photos.length,
     }));
 
     // Інструкції адміна й пошуку дописуємо в кінець персони, а не окремим

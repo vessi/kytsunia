@@ -7,8 +7,13 @@ export type RecentMessage = {
   senderName: string;
   text: string;
   // Список base64-фото в логічному повідомленні (альбом → кілька, одиночне → одне).
-  // Порожній — текстове повідомлення.
+  // Порожній — текстове повідомлення. Для історії не використовується: живе
+  // зображення перетягує увагу моделі на себе на всі наступні відповіді.
   photos?: ReadonlyArray<{ mime: string; base64: string }>;
+  // Текстові описи фото цього повідомлення — те, що модель бачить замість картинки.
+  photoNotes?: readonly string[];
+  // Скільки фото було, якщо описів нема (ліміт описів чи помилка) — щоб лишити «[фото]».
+  photoCount?: number;
 };
 
 export type CurrentMessage = {
@@ -50,6 +55,16 @@ function photoMarker(count: number, startNumber: number): string {
   return `[фото ${startNumber}-${startNumber + count - 1}] `;
 }
 
+/**
+ * Маркер для фото в історії: опис, якщо є, інакше голе «[фото]». Описи
+ * альбому йдуть через «;».
+ */
+export function historyPhotoMarker(notes: readonly string[], count: number): string {
+  if (notes.length > 0) return `[фото: ${notes.join("; ")}] `;
+  if (count === 0) return "";
+  return count === 1 ? "[фото] " : `[фото ×${count}] `;
+}
+
 export function buildLlmRequest(
   current: CurrentMessage,
   recent: readonly RecentMessage[],
@@ -68,9 +83,14 @@ export function buildLlmRequest(
 
   for (const m of recent) {
     const photos = m.photos ?? [];
-    const marker = photoMarker(photos.length, photoCounter);
-    photoCounter += photos.length;
-    for (const p of photos) allImages.push(toImageBlock(p));
+    let marker: string;
+    if (photos.length > 0) {
+      marker = photoMarker(photos.length, photoCounter);
+      photoCounter += photos.length;
+      for (const p of photos) allImages.push(toImageBlock(p));
+    } else {
+      marker = historyPhotoMarker(m.photoNotes ?? [], m.photoCount ?? 0);
+    }
     recentLines.push(`${m.senderName}: ${marker}${m.text}`.trimEnd());
   }
 

@@ -39,10 +39,12 @@ const envSchema = z.object({
   //   user(текст) → bot → user(текст) → bot → user(фото)
   // має знайти фото за 4 кроки.
   KYTSUNIA_VISION_THREAD_DEPTH: envValue(z.coerce.number().int().nonnegative().default(5)),
-  // Fallback: якщо ні trigger, ні chain не дали фото — беремо останнє фото в чаті
-  // за останні N мс. Покриває «постив фото, тегаю Кицюню без reply».
-  // Короткий TTL щоб не повертатись до recency-bias.
-  KYTSUNIA_VISION_TTL_MS: envValue(z.coerce.number().int().nonnegative().default(120_000)),
+  // Фото з історії йдуть у контекст текстовим описом, а не картинкою. Описи
+  // генерує дешева модель, ліниво, з кешем назавжди за unique_id.
+  KYTSUNIA_PHOTO_DESCRIBE_MODEL: envValue(z.string().default("claude-haiku-4-5")),
+  // Скільки нових описів робити за одну відповідь: обмежує затримку й ціну,
+  // коли в чат щойно накидали десяток фото.
+  KYTSUNIA_PHOTO_DESCRIBE_MAX_PER_REPLY: envValue(z.coerce.number().int().nonnegative().default(3)),
   // Дайджест: переказ останніх N повідомлень чату.
   KYTSUNIA_DIGEST_ENABLED: envValue(
     z

@@ -123,7 +123,8 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     maxPhotosPerAlbum: 5,
     albumDebounceMs: 1500,
     threadDepth: 5,
-    ttlMs: 0, // тести явно вмикають TTL коли треба
+    describePhoto: vi.fn(async () => null),
+    describeMaxPerReply: 3,
     sleep: vi.fn().mockResolvedValue(undefined),
     now: () => 1_000_000,
     appendMessage: vi.fn(),
@@ -522,7 +523,7 @@ describe("invokeLlmReply: vision", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  // ─── Reply-chain traversal & TTL fallback ─────────────────────────────
+  // ─── Reply-chain traversal ────────────────────────────────────────────
 
   it("persists bot reply to DB after sending", async () => {
     const appendMock = vi.fn();
@@ -707,105 +708,6 @@ describe("invokeLlmReply: vision", () => {
 
     await invokeLlmReply(ctx, 200, deps);
     expect(fetcher).not.toHaveBeenCalled();
-  });
-
-  it("TTL fallback finds recent photo when no trigger or chain", async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
-    const NOW = 1_000_000;
-    const deps = makeBaseDeps({
-      photoFetcher: fetcher,
-      ttlMs: 60_000,
-      now: () => NOW,
-    });
-    dbsToClose.push(deps.db);
-
-    const append = makeMessageAppender(deps.db);
-    // Фото 30 сек тому — в межах TTL
-    append({
-      chatId: 1,
-      messageId: 100,
-      ts: NOW - 30_000,
-      senderId: 7,
-      senderName: "A",
-      text: "",
-      kind: "photo",
-      photoFileId: "recent",
-      photoUniqueId: "recent_u",
-    });
-
-    const { ctx } = makeCtx({ text: "що це?" });
-    await invokeLlmReply(ctx, 999, deps);
-
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledWith("recent", "recent_u");
-  });
-
-  it("TTL fallback ignores photos outside the window", async () => {
-    const fetcher = vi.fn() as unknown as PhotoFetcher;
-    const NOW = 1_000_000;
-    const deps = makeBaseDeps({
-      photoFetcher: fetcher,
-      ttlMs: 60_000,
-      now: () => NOW,
-    });
-    dbsToClose.push(deps.db);
-
-    const append = makeMessageAppender(deps.db);
-    // Фото 5 хв тому — поза TTL
-    append({
-      chatId: 1,
-      messageId: 100,
-      ts: NOW - 5 * 60_000,
-      senderId: 7,
-      senderName: "A",
-      text: "",
-      kind: "photo",
-      photoFileId: "old",
-      photoUniqueId: "old_u",
-    });
-
-    const { ctx } = makeCtx({ text: "що це?" });
-    await invokeLlmReply(ctx, 999, deps);
-
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
-  it("TTL fallback skipped when trigger has photo", async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue({ mime: "image/jpeg", base64: "B" }) as unknown as PhotoFetcher;
-    const NOW = 1_000_000;
-    const deps = makeBaseDeps({
-      photoFetcher: fetcher,
-      ttlMs: 60_000,
-      now: () => NOW,
-    });
-    dbsToClose.push(deps.db);
-
-    // Recent photo в TTL — не повинно мікшуватись з trigger.
-    const append = makeMessageAppender(deps.db);
-    append({
-      chatId: 1,
-      messageId: 100,
-      ts: NOW - 10_000,
-      senderId: 7,
-      senderName: "A",
-      text: "",
-      kind: "photo",
-      photoFileId: "recent",
-      photoUniqueId: "recent_u",
-    });
-
-    const { ctx } = makeCtx({
-      caption: "ось нове",
-      photo: [{ file_id: "newone", file_unique_id: "newone_u" }],
-    });
-    await invokeLlmReply(ctx, 999, deps);
-
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledWith("newone", "newone_u");
   });
 });
 
@@ -1213,6 +1115,133 @@ describe("invokeLlmReply: ignored users", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     const system = llm.calls[0]?.system as Array<{ text: string }>;
     expect(system.map((b) => b.text).join("\n")).toContain("дивись");
+  });
+});
+
+describe("invokeLlmReply: photo descriptions in history", () => {
+  const opened: InvokeLlmDeps[] = [];
+
+  afterEach(() => {
+    for (const d of opened.splice(0)) d.db.close();
+  });
+
+  function deps(overrides: Partial<InvokeLlmDeps>): InvokeLlmDeps {
+    const d = makeBaseDeps(overrides);
+    opened.push(d);
+    return d;
+  }
+
+  function makeLlm() {
+    const calls: Array<{ system: SystemContent; content: UserContent }> = [];
+    const client: LlmClient = {
+      reply: async (system, content) => {
+        calls.push({ system, content });
+        return {
+          text: "ок",
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        };
+      },
+    };
+    return { client, calls };
+  }
+
+  function seedPhoto(d: InvokeLlmDeps, messageId: number, uniqueId: string, text = "") {
+    makeMessageAppender(d.db)({
+      chatId: 1,
+      messageId,
+      ts: 1_000_000 - (1000 - messageId),
+      senderId: 8,
+      senderName: "Olha",
+      text,
+      kind: "photo",
+      photoFileId: `f_${uniqueId}`,
+      photoUniqueId: uniqueId,
+    });
+  }
+
+  it("shows a recent photo as a text note in the author's line, never as an image", async () => {
+    const llm = makeLlm();
+    const fetcher = vi.fn();
+    const describePhoto = vi.fn(async (p: { uniqueId: string }) => ({
+      text: `опис ${p.uniqueId}`,
+      generated: true,
+    }));
+    const d = deps({ llmClient: llm.client, photoFetcher: fetcher, describePhoto });
+    seedPhoto(d, 10, "cinnabon", "дивіться");
+    const { ctx } = makeCtx({ text: "Кицюня, як день?" });
+    await invokeLlmReply(ctx, 999, d);
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(typeof llm.calls[0]?.content).toBe("string");
+    expect(describePhoto).toHaveBeenCalledWith(
+      { fileId: "f_cinnabon", uniqueId: "cinnabon" },
+      { chatId: 1, userId: 7, userName: "Andriy" },
+      { allowGenerate: true },
+    );
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system.map((b) => b.text).join("\n")).toContain("Olha: [фото: опис cinnabon] дивіться");
+  });
+
+  it("generates at most describeMaxPerReply new descriptions, newest first, cached ones for free", async () => {
+    const llm = makeLlm();
+    // «old» уже в кеші, «mid» і «new» — ні; бюджет на один новий опис.
+    const describePhoto = vi.fn(
+      async (p: { uniqueId: string }, _ctx: unknown, opts?: { allowGenerate: boolean }) => {
+        if (p.uniqueId === "old") return { text: "опис old", generated: false };
+        return opts?.allowGenerate ? { text: `опис ${p.uniqueId}`, generated: true } : null;
+      },
+    );
+    const d = deps({ llmClient: llm.client, describePhoto, describeMaxPerReply: 1 });
+    seedPhoto(d, 10, "old");
+    seedPhoto(d, 11, "mid");
+    seedPhoto(d, 12, "new");
+    const { ctx } = makeCtx({ text: "Кицюня, як день?" });
+    await invokeLlmReply(ctx, 999, d);
+
+    const calls = describePhoto.mock.calls.map((c) => [
+      (c[0] as { uniqueId: string }).uniqueId,
+      (c[2] as { allowGenerate: boolean }).allowGenerate,
+    ]);
+    expect(calls).toEqual([
+      ["new", true],
+      ["mid", false],
+      ["old", false],
+    ]);
+    const text = (llm.calls[0]?.system as Array<{ text: string }>).map((b) => b.text).join("\n");
+    expect(text).toContain("[фото: опис new]");
+    expect(text).toContain("[фото: опис old]");
+    expect(text).toContain("Olha: [фото]");
+  });
+
+  it("does not describe a photo that is already attached live from the reply chain", async () => {
+    const llm = makeLlm();
+    const fetcher = vi.fn().mockResolvedValue({ mime: "image/jpeg", base64: "B64" });
+    const describePhoto = vi.fn(async () => ({ text: "x", generated: true }));
+    const d = deps({ llmClient: llm.client, photoFetcher: fetcher, describePhoto });
+    seedPhoto(d, 10, "live");
+    const { ctx } = makeCtx({ text: "Кицюня, що це?" });
+    (ctx.message as { reply_to_message?: unknown }).reply_to_message = {
+      message_id: 10,
+      from: { id: 8, first_name: "Olha" },
+      photo: [{ file_id: "f_live", file_unique_id: "live" }],
+    };
+    await invokeLlmReply(ctx, 999, d);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(describePhoto).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a bare marker when the description fails", async () => {
+    const llm = makeLlm();
+    const d = deps({ llmClient: llm.client, describePhoto: vi.fn(async () => null) });
+    seedPhoto(d, 10, "broken");
+    const { ctx } = makeCtx({ text: "Кицюня, як день?" });
+    await invokeLlmReply(ctx, 999, d);
+    const text = (llm.calls[0]?.system as Array<{ text: string }>).map((b) => b.text).join("\n");
+    expect(text).toContain("Olha: [фото]");
   });
 });
 

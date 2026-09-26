@@ -46,6 +46,8 @@ export type InvokeDigestDeps = {
   // Профілі постійних учасників: дайджест знає, хто є хто.
   regularsStore: RegularsStore;
   botUserId?: number;
+  // Кешовані описи фото для транскрипту; нових не генерує.
+  photoDescriptions?: { get: (uniqueId: string) => string | null };
 };
 
 /**
@@ -63,7 +65,8 @@ export function resolveCount(
   return Math.min(Math.max(Math.trunc(requested), 1), maxCount);
 }
 
-function photoMarker(count: number): string {
+function photoMarker(count: number, notes: readonly string[]): string {
+  if (notes.length > 0) return `[фото: ${notes.join("; ")}] `;
   if (count === 0) return "";
   if (count === 1) return "[фото] ";
   return `[фото ×${count}] `;
@@ -72,9 +75,13 @@ function photoMarker(count: number): string {
 /**
  * Транскрипт для моделі: «[HH:MM] Ім'я: текст», з роздільником при зміні доби.
  * Фото йдуть маркером, а не картинкою — 300 повідомлень з фото коштували б
- * абсурдних грошей, та й дайджест про текст, а не про зображення.
+ * абсурдних грошей. Якщо для фото вже є опис у кеші (його зробили для
+ * контексту відповідей), маркер несе його: нових описів дайджест не генерує.
  */
-export function renderTranscript(rows: readonly RecentMessageRow[]): string {
+export function renderTranscript(
+  rows: readonly RecentMessageRow[],
+  describe: (uniqueId: string) => string | null = () => null,
+): string {
   const lines: string[] = [];
   let currentDay: string | null = null;
 
@@ -84,7 +91,10 @@ export function renderTranscript(rows: readonly RecentMessageRow[]): string {
       lines.push(`--- ${day} ---`);
       currentDay = day;
     }
-    const marker = photoMarker(row.photos.length);
+    const notes = row.photos
+      .map((p) => describe(p.uniqueId))
+      .filter((d): d is string => d !== null);
+    const marker = photoMarker(row.photos.length, notes);
     lines.push(`[${formatKyivTime(row.ts)}] ${row.senderName}: ${marker}${row.text}`.trimEnd());
   }
 
@@ -95,6 +105,7 @@ export function buildDigestRequest(
   rows: readonly RecentMessageRow[],
   prompt: string,
   profiles: readonly ProfileEntry[] = [],
+  describe?: (uniqueId: string) => string | null,
 ): { system: SystemBlock[]; userMessage: string } {
   // Промпт сам по собі коротший за мінімальний кешований префікс, тож
   // брейкпойнт ставимо на профілях: разом з ними префікс уже вартий кешу, а
@@ -107,6 +118,7 @@ export function buildDigestRequest(
   }
   const userMessage = `Ось останні ${rows.length} повідомлень чату:\n\n${renderTranscript(
     rows,
+    describe,
   )}\n\nЗроби дайджест.`;
   return { system, userMessage };
 }
@@ -179,7 +191,12 @@ export async function invokeDigest(
     deps.instructionStore.list(chatId).map((i) => i.text),
   );
   const profiles = collectChatProfiles(deps.regularsStore, chatId, deps.botUserId);
-  const { system, userMessage } = buildDigestRequest(rows, prompt, profiles);
+  const { system, userMessage } = buildDigestRequest(
+    rows,
+    prompt,
+    profiles,
+    deps.photoDescriptions ? (id) => deps.photoDescriptions?.get(id) ?? null : undefined,
+  );
   const stopTyping = deps.startTyping(ctx);
 
   try {

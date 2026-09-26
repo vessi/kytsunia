@@ -42,6 +42,23 @@ describe("buildLlmRequest", () => {
     expect(req.userMessage).toBe("Andriy: привіт");
   });
 
+  it("renders history photos as notes, or a bare marker without notes", () => {
+    const req = buildLlmRequest(
+      { senderName: "Andriy", text: "?" },
+      [
+        { senderName: "Olha", text: "дивіться", photoNotes: ["сінабон", "кава"], photoCount: 2 },
+        { senderName: "Stepan", text: "", photoNotes: [], photoCount: 1 },
+        { senderName: "Ira", text: "", photoNotes: [], photoCount: 3 },
+      ],
+      "PERSONA",
+    );
+    const text = joinSystem(req.system);
+    expect(text).toContain("Olha: [фото: сінабон; кава] дивіться");
+    expect(text).toContain("Stepan: [фото]");
+    expect(text).toContain("Ira: [фото ×3]");
+    expect(req.userMessage).toBe("Andriy: ?");
+  });
+
   it("puts profiles into their own cached block right after the persona", () => {
     const req = buildLlmRequest({ senderName: "Andriy", text: "привіт" }, [], "PERSONA", [
       { displayName: "Andriy", profile: "Snarky engineer." },
