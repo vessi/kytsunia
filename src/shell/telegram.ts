@@ -1,7 +1,8 @@
 import { type Context, InputFile } from "grammy";
 import type { Action, MessageInput, MessageKind } from "../core/types.js";
+import { replyInChunks } from "./chunks.js";
 import type { InvokeDigestDeps } from "./llm/digest.js";
-import { invokeDigest, truncateForTelegram } from "./llm/digest.js";
+import { invokeDigest } from "./llm/digest.js";
 import type { InvokeLlmDeps } from "./llm/invoke.js";
 import { invokeLlmReply } from "./llm/invoke.js";
 import { modelChoicesHelp, resolveModel } from "./llm/models.js";
@@ -216,7 +217,7 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
         all.length === 0
           ? "У цьому чаті спеціальних інструкцій немає."
           : all.map((i) => `#${i.id} · ${formatKyivDate(i.createdAt)}\n${i.text}`).join("\n\n");
-      await ctx.reply(truncateForTelegram(text), { reply_to_message_id: action.replyTo });
+      await replyInChunks(ctx, text, action.replyTo);
       return;
     }
     case "remove_special_instruction": {
@@ -260,7 +261,7 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       const text = override
         ? `Персона цього чату (задана адміном):\n\n${override}`
         : `Персона за замовчуванням (з коду):\n\n${PERSONA_PROMPT}`;
-      await ctx.reply(truncateForTelegram(text), { reply_to_message_id: action.replyTo });
+      await replyInChunks(ctx, text, action.replyTo);
       return;
     }
     case "set_chat_persona": {

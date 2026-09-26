@@ -21,8 +21,16 @@ function toEntry(p: RegularProfile): ProfileEntry {
  * тут не перевіряємо: при відмові профіль стирається, а refresh таких
  * пропускає, тож у таблиці їх немає.
  */
-export function collectChatProfiles(store: RegularsStore, chatId: number): ProfileEntry[] {
-  return store.listByChat(chatId).map(toEntry);
+export function collectChatProfiles(
+  store: RegularsStore,
+  chatId: number,
+  // Кого не показувати: самого бота, поки його старий профіль не стерто.
+  excludeUserId?: number,
+): ProfileEntry[] {
+  return store
+    .listByChat(chatId)
+    .filter((p) => p.userId !== excludeUserId)
+    .map(toEntry);
 }
 
 /**

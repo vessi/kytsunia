@@ -142,6 +142,26 @@ describe("profile refresh", () => {
     expect(d.llmCallStore.checkUserRate(99, 15).used).toBe(0);
   });
 
+  it("never profiles the bot itself and removes its stale profile", async () => {
+    seed(1, 10, "Andriy", 6);
+    seed(1, 9999, "Кицюня", 40);
+    const llm = fakeLlm();
+    const d = { ...deps(llm.client), botUserId: 9999 };
+    d.regularsStore.upsert({
+      userId: 9999,
+      chatId: 1,
+      displayName: "Кицюня",
+      profile: "це я",
+      messageCount: 40,
+      lastMessageTs: 0,
+    });
+    const result = await refreshProfiles(d, { ...opts, chatId: 1 });
+    expect(result.processed).toBe(1);
+    expect(llm.calls).toHaveLength(1);
+    expect(d.regularsStore.get(9999, 1)).toBeNull();
+    expect(d.regularsStore.get(10, 1)).not.toBeNull();
+  });
+
   it("skips opted-out users and counts them", async () => {
     seed(1, 10, "Andriy", 6);
     seed(1, 11, "Olha", 6);

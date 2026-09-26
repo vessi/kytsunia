@@ -58,6 +58,14 @@ describe("collectChatProfiles", () => {
     expect(collectChatProfiles(store, 1).map((p) => p.displayName)).toEqual(["Loud", "Quiet"]);
   });
 
+  it("can leave out one user, e.g. the bot itself", () => {
+    const store = makeMockStore([
+      makeProfile(100, 1, "Olha", "o"),
+      makeProfile(9999, 1, "Кицюня", "це я"),
+    ]);
+    expect(collectChatProfiles(store, 1, 9999).map((p) => p.displayName)).toEqual(["Olha"]);
+  });
+
   it("appends manual notes to the profile text", () => {
     const store = makeMockStore([
       makeProfile(100, 1, "Olha", "Бігає.", { manualNotes: "Без «тітко»." }),

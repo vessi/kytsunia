@@ -342,7 +342,7 @@ export async function invokeLlmReply(
     const recentRows = getRecentMessages(deps.db, chatId, deps.recentContextSize, replyTo);
     // Усі профілі чату, не лише авторів останніх повідомлень: інакше «що
     // думаєш про Олю?» приходить без Олі, щойно вона хвилину помовчала.
-    const profiles = collectChatProfiles(deps.regularsStore, chatId);
+    const profiles = collectChatProfiles(deps.regularsStore, chatId, deps.botUserId);
     // Гілка, на яку відповідають: без неї «а чому саме так?» у reply на давню
     // репліку приходить до моделі без самої репліки.
     const replyMessage = ctx.message?.reply_to_message;

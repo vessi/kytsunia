@@ -13,7 +13,6 @@ import {
   invokeDigest,
   renderTranscript,
   resolveCount,
-  truncateForTelegram,
 } from "../../../src/shell/llm/digest.js";
 import type { Db } from "../../../src/shell/storage/db.js";
 import { makeMessageAppender, type RecentMessageRow } from "../../../src/shell/storage/messages.js";
@@ -123,24 +122,6 @@ describe("renderTranscript", () => {
       }),
     ]);
     expect(album).toContain("[фото ×2]");
-  });
-});
-
-describe("truncateForTelegram", () => {
-  it("leaves short text alone", () => {
-    expect(truncateForTelegram("коротко", 100)).toBe("коротко");
-  });
-
-  it("truncates with an ellipsis", () => {
-    const out = truncateForTelegram("а".repeat(200), 10);
-    expect(out).toHaveLength(10);
-    expect(out.endsWith("…")).toBe(true);
-  });
-
-  it("does not split a surrogate pair", () => {
-    // 4 звичайні символи + емодзі (2 code units) — обріз на 6 припав би всередину пари.
-    const out = truncateForTelegram("абвг😺д", 6);
-    expect(out).toBe("абвг…");
   });
 });
 
@@ -481,18 +462,17 @@ describe("invokeDigest", () => {
     expect(after).toBe(before);
   });
 
-  it("truncates an over-long digest to the Telegram limit", async () => {
+  it("sends an over-long digest as several messages, only the first as a reply", async () => {
     const { ctx, reply } = makeCtx();
     seed(10);
+    const text = `${"• перше ".repeat(300)}\n\n${"• друге ".repeat(300)}`;
 
-    await invokeDigest(
-      ctx,
-      999,
-      undefined,
-      makeDeps({ llmClient: makeFakeLlm("я".repeat(5000)).client }),
-    );
+    await invokeDigest(ctx, 999, undefined, makeDeps({ llmClient: makeFakeLlm(text).client }));
 
-    expect(String(reply.mock.calls[0]?.[0]).length).toBe(4096);
+    expect(reply).toHaveBeenCalledTimes(2);
+    expect(reply.mock.calls[0]?.[1]).toEqual({ reply_to_message_id: 999 });
+    expect(reply.mock.calls[1]?.[1]).toEqual({});
+    for (const call of reply.mock.calls) expect(String(call[0]).length).toBeLessThanOrEqual(4096);
   });
 
   it("never sends an empty message to Telegram", async () => {

@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import { replyInChunks } from "../chunks.js";
 import type { Logger } from "../logger.js";
 import type { ChatSettingsStore } from "../storage/chat-settings.js";
 import type { InstructionStore } from "../storage/instructions.js";
@@ -6,12 +7,12 @@ import type { LlmCallStore } from "../storage/llm-calls.js";
 import type { RegularProfile, RegularsStore } from "../storage/regulars.js";
 import type { TypingStarter } from "../typing.js";
 import type { LlmClient, SystemBlock } from "./anthropic.js";
-import { truncateForTelegram } from "./digest.js";
 import { withSpecialInstructions } from "./persona.js";
 import { calculateCost } from "./pricing.js";
 
-// Три речення на людину ≈ 60 токенів; на 20 людей із запасом.
-const ROSTER_MAX_TOKENS = 2000;
+// Три речення на людину ≈ 100 токенів; на 20 людей — 2k тексту, а роздуми
+// моделі йдуть у той самий бюджет, тож із запасом.
+const ROSTER_MAX_TOKENS = 5000;
 
 // Більше людей — і в ліміт Telegram не влізе, і читати ніхто не буде.
 export const ROSTER_MAX_PEOPLE = 20;
@@ -32,6 +33,7 @@ export type InvokeRosterDeps = {
   llmCallStore: LlmCallStore;
   regularsStore: RegularsStore;
   optedOutUserIds: () => ReadonlySet<number>;
+  botUserId?: number;
   instructionStore: InstructionStore;
   chatSettings: ChatSettingsStore;
   // Модель і персона — ті самі, що для звичайних відповідей у цьому чаті.
@@ -76,7 +78,7 @@ export async function invokeRoster(
   const userName = ctx.from?.first_name ?? "";
 
   const profiles = selectRosterProfiles(
-    deps.regularsStore.listByChat(chatId),
+    deps.regularsStore.listByChat(chatId).filter((p) => p.userId !== deps.botUserId),
     deps.optedOutUserIds(),
   );
   if (profiles.length === 0) {
@@ -141,9 +143,12 @@ export async function invokeRoster(
     });
     deps.log.info({ chatId, userId, people: profiles.length, cost }, "roster ok");
 
+    if (reply.stopReason === "max_tokens") {
+      deps.log.warn({ chatId, userId, outputTokens: reply.outputTokens }, "roster cut short");
+    }
     const text = reply.text.trim() || "Загубила думку, спитай ще раз.";
     // Як і дайджест, у messages не зберігаємо: довгий текст витіснив би контекст.
-    await ctx.reply(truncateForTelegram(text), { reply_to_message_id: replyTo });
+    await replyInChunks(ctx, text, replyTo);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     deps.llmCallStore.record({ ...baseRecord, status: "error", errorMessage });

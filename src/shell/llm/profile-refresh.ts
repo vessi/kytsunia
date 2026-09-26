@@ -91,6 +91,8 @@ export type ProfileRefreshDeps = {
   regularsStore: RegularsStore;
   llmCallStore: LlmCallStore;
   optedOutUserIds: () => ReadonlySet<number>;
+  // Сам бот пише більше за поріг і теж стає «постійним» — профіль собі не робимо.
+  botUserId?: number;
   log: Logger;
 };
 
@@ -165,8 +167,14 @@ export async function refreshProfiles(
 ): Promise<RefreshResult> {
   const cutoffTs = Date.now() - opts.days * 24 * 3600 * 1000;
   const optedOut = deps.optedOutUserIds();
-  const all = findCandidates(deps.db, opts, cutoffTs);
+  const all = findCandidates(deps.db, opts, cutoffTs).filter((c) => c.userId !== deps.botUserId);
   const candidates = all.filter((c) => !optedOut.has(c.userId));
+  // Профіль бота міг зʼявитись до цієї перевірки — прибираємо, щоб не висів у контексті.
+  if (deps.botUserId !== undefined && opts.chatId !== undefined && !opts.dryRun) {
+    if (deps.regularsStore.remove(deps.botUserId, opts.chatId)) {
+      deps.log.info({ chatId: opts.chatId }, "removed the bot's own profile");
+    }
+  }
   const result: RefreshResult = {
     processed: 0,
     failed: 0,

@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import { replyInChunks } from "../chunks.js";
 import type { Logger } from "../logger.js";
 import type { ChatSettingsStore } from "../storage/chat-settings.js";
 import type { Db } from "../storage/db.js";
@@ -14,14 +15,12 @@ import { calculateCost } from "./pricing.js";
 import { collectChatProfiles, type ProfileEntry, renderProfilesBlock } from "./profiles.js";
 
 // Дайджест довший за звичайний реплай: 3-7 пунктів + репліка від себе.
-// Модель для дайджесту — з thinking, тож у бюджет закладено і роздуми.
-const DIGEST_MAX_TOKENS = 2500;
+// Модель думає завжди, і роздуми входять у цей самий бюджет, тож із запасом:
+// текст на два повідомлення Telegram — це ~3k токенів, плюс роздуми.
+const DIGEST_MAX_TOKENS = 6000;
 
 // Менше за це — дайджест робити нема з чого, і не варто палити виклик.
 const MIN_MESSAGES = 5;
-
-// Ліміт одного повідомлення в Telegram.
-const TELEGRAM_MAX_CHARS = 4096;
 
 export type InvokeDigestDeps = {
   enabled: boolean;
@@ -46,6 +45,7 @@ export type InvokeDigestDeps = {
   chatSettings: ChatSettingsStore;
   // Профілі постійних учасників: дайджест знає, хто є хто.
   regularsStore: RegularsStore;
+  botUserId?: number;
 };
 
 /**
@@ -109,18 +109,6 @@ export function buildDigestRequest(
     rows,
   )}\n\nЗроби дайджест.`;
   return { system, userMessage };
-}
-
-/**
- * Обрізає до ліміту Telegram, не розриваючи сурогатну пару (емодзі) навпіл.
- */
-export function truncateForTelegram(text: string, max: number = TELEGRAM_MAX_CHARS): string {
-  if (text.length <= max) return text;
-  let cut = text.slice(0, max - 1);
-  const last = cut.charCodeAt(cut.length - 1);
-  // Висячий high surrogate без пари — прибираємо, інакше вийде «�».
-  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
-  return `${cut}…`;
 }
 
 export async function invokeDigest(
@@ -190,7 +178,7 @@ export async function invokeDigest(
     deps.prompt,
     deps.instructionStore.list(chatId).map((i) => i.text),
   );
-  const profiles = collectChatProfiles(deps.regularsStore, chatId);
+  const profiles = collectChatProfiles(deps.regularsStore, chatId, deps.botUserId);
   const { system, userMessage } = buildDigestRequest(rows, prompt, profiles);
   const stopTyping = deps.startTyping(ctx);
 
@@ -226,6 +214,9 @@ export async function invokeDigest(
       "digest ok",
     );
 
+    if (reply.stopReason === "max_tokens") {
+      deps.log.warn({ chatId, userId, outputTokens: reply.outputTokens }, "digest cut short");
+    }
     // Порожній текст буває, якщо модель витратила весь бюджет на роздуми —
     // Telegram на порожньому повідомленні впаде, тож підстраховуємось.
     const text = reply.text.trim() || "Не склалось у дайджест, спробуй ще раз.";
@@ -233,7 +224,7 @@ export async function invokeDigest(
     // Дайджест НЕ зберігаємо в messages, на відміну від звичайних відповідей:
     // це кілька тисяч символів, які б витіснили половину recent-контексту
     // наступних реплаїв (і потрапили б у наступний же дайджест).
-    await ctx.reply(truncateForTelegram(text), { reply_to_message_id: replyTo });
+    await replyInChunks(ctx, text, replyTo);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     deps.llmCallStore.record({ ...baseRecord, status: "error", errorMessage });

@@ -149,6 +149,7 @@ const invokeDigestDeps: InvokeDigestDeps = {
   instructionStore,
   chatSettings,
   regularsStore,
+  botUserId,
 };
 
 const invokeRosterDeps: InvokeRosterDeps = {
@@ -156,6 +157,7 @@ const invokeRosterDeps: InvokeRosterDeps = {
   llmCallStore,
   regularsStore,
   optedOutUserIds: () => new Set(optOutsStore.list()),
+  botUserId,
   instructionStore,
   chatSettings,
   model: config.LLM_MODEL,
@@ -237,6 +239,7 @@ bot.on("message", async (ctx) => {
           regularsStore,
           llmCallStore,
           optedOutUserIds: () => new Set(optOutsStore.list()),
+          botUserId,
           log,
         },
         profileRefreshOptions: {
