@@ -66,6 +66,17 @@ describe("collectChatProfiles", () => {
     expect(collectChatProfiles(store, 1, 9999).map((p) => p.displayName)).toEqual(["Olha"]);
   });
 
+  it("adds the telegram handle to the display name when known", () => {
+    const store = makeMockStore([
+      makeProfile(100, 1, "Olha", "o", { username: "olya_k" }),
+      makeProfile(101, 1, "Ivan", "i", { username: null }),
+    ]);
+    expect(collectChatProfiles(store, 1).map((p) => p.displayName)).toEqual([
+      "Olha (@olya_k)",
+      "Ivan",
+    ]);
+  });
+
   it("appends manual notes to the profile text", () => {
     const store = makeMockStore([
       makeProfile(100, 1, "Olha", "Бігає.", { manualNotes: "Без «тітко»." }),

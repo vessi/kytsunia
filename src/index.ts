@@ -22,6 +22,7 @@ import { makePhotoCacheStore } from "./shell/storage/photo-cache.js";
 import { makePhotoDescriptionStore } from "./shell/storage/photo-descriptions.js";
 import { makeRegularsStore } from "./shell/storage/regulars.js";
 import { makeDynamicRuleStore } from "./shell/storage/rules.js";
+import { makeUsersStore } from "./shell/storage/users.js";
 import { executeActions, toMessageInput, withoutPhotos } from "./shell/telegram.js";
 import { startTyping } from "./shell/typing.js";
 
@@ -32,6 +33,7 @@ log.info({ env: config.NODE_ENV }, "kytsunia starting");
 
 const db = openDb(config.DB_PATH, log);
 const llmCallStore = makeLlmCallStore(db);
+const usersStore = makeUsersStore(db);
 const regularsStore = makeRegularsStore(db);
 const optOutsStore = makeOptOutsStore(db);
 const instructionStore = makeInstructionStore(db);
@@ -123,6 +125,7 @@ const invokeLlmDeps: InvokeLlmDeps = {
   regularsStore,
   instructionStore,
   isIgnored: (userId) => ignoredUsersStore.isIgnored(userId),
+  usernameOf: (userId) => usersStore.usernameOf(userId),
   rng: Math.random,
   log,
   visionEnabled: config.KYTSUNIA_VISION_ENABLED,
@@ -204,6 +207,22 @@ log.info(
 bot.on("message", async (ctx) => {
   const input = toMessageInput(ctx);
   if (!input) return;
+
+  // Хендли: з автора і з того, кому відповіли — щоб знати й тих, хто давно мовчить.
+  if (input.senderId) {
+    usersStore.upsert({
+      userId: input.senderId,
+      username: input.senderUsername ?? null,
+      firstName: input.senderName || null,
+    });
+  }
+  if (input.replyTo?.authorId) {
+    usersStore.upsert({
+      userId: input.replyTo.authorId,
+      username: input.replyTo.authorUsername ?? null,
+      firstName: input.replyTo.authorName || null,
+    });
+  }
 
   // Текст ігнорованого лишається в базі, щоб розмова не втрачала людину, а
   // от його фото моделі бачити не треба — посилання на них не зберігаємо.

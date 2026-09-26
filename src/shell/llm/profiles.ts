@@ -1,4 +1,5 @@
 import type { RegularProfile, RegularsStore } from "../storage/regulars.js";
+import { displayWithHandle } from "./names.js";
 
 export type ProfileEntry = {
   displayName: string;
@@ -10,7 +11,7 @@ function toEntry(p: RegularProfile): ProfileEntry {
     ? `${p.profile}\n\nДодаткові примітки: ${p.manualNotes}`
     : p.profile;
   return {
-    displayName: p.displayName ?? "Unknown",
+    displayName: displayWithHandle(p.displayName ?? "Unknown", p.username),
     profile: combined,
   };
 }

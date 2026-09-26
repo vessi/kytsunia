@@ -1,5 +1,6 @@
 import type { Message } from "grammy/types";
 import type { Db } from "../storage/db.js";
+import { displayWithHandle } from "./names.js";
 
 export type ThreadMessage = {
   senderName: string;
@@ -15,6 +16,7 @@ export type ReplyTarget = {
 };
 
 interface ThreadRow {
+  sender_id: number;
   sender_name: string | null;
   text: string | null;
   kind: string;
@@ -42,7 +44,7 @@ export function replyTargetFromMessage(reply: Message): ReplyTarget {
   const kind = reply.sticker ? "sticker" : reply.animation ? "animation" : "text";
   return {
     messageId: reply.message_id,
-    senderName: reply.from?.first_name ?? "",
+    senderName: displayWithHandle(reply.from?.first_name ?? "", reply.from?.username),
     text: describe(reply.text ?? reply.caption ?? "", kind, Boolean(reply.photo)),
   };
 }
@@ -61,11 +63,13 @@ export function collectThread(
   chatId: number,
   target: ReplyTarget,
   maxDepth: number,
+  // Хендл за user_id для рядків із бази; ціль уже приходить з хендлом.
+  usernameOf: (userId: number) => string | null = () => null,
 ): ThreadMessage[] {
   if (maxDepth <= 0) return [];
 
   const stmt = db.prepare(`
-    SELECT sender_name, text, kind, reply_to_id, photo_file_id
+    SELECT sender_id, sender_name, text, kind, reply_to_id, photo_file_id
     FROM messages
     WHERE chat_id = ? AND msg_id = ?
   `);
@@ -79,7 +83,12 @@ export function collectThread(
     const row = stmt.get(chatId, currentId) as ThreadRow | undefined;
     if (!row) break;
     const text = describe(row.text ?? "", row.kind, row.photo_file_id !== null);
-    if (text) newestFirst.push({ senderName: row.sender_name ?? "", text });
+    if (text) {
+      newestFirst.push({
+        senderName: displayWithHandle(row.sender_name ?? "", usernameOf(row.sender_id)),
+        text,
+      });
+    }
     currentId = row.reply_to_id;
   }
 

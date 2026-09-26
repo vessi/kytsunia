@@ -7,6 +7,7 @@ import type { LlmCallStore } from "../storage/llm-calls.js";
 import type { RegularProfile, RegularsStore } from "../storage/regulars.js";
 import type { TypingStarter } from "../typing.js";
 import type { LlmClient, SystemBlock } from "./anthropic.js";
+import { displayWithHandle } from "./names.js";
 import { withSpecialInstructions } from "./persona.js";
 import { calculateCost } from "./pricing.js";
 
@@ -61,7 +62,7 @@ export function selectRosterProfiles(
 export function renderRosterProfiles(profiles: readonly RegularProfile[]): string {
   return profiles
     .map((p) => {
-      const name = p.displayName ?? String(p.userId);
+      const name = displayWithHandle(p.displayName ?? String(p.userId), p.username);
       const notes = p.manualNotes ? `\nСлужбові примітки: ${p.manualNotes}` : "";
       return `${name}:\n${p.profile}${notes}`;
     })

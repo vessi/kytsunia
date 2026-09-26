@@ -115,6 +115,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     regularsStore,
     instructionStore: { list: vi.fn(() => []), add: vi.fn(), remove: vi.fn() },
     isIgnored: () => false,
+    usernameOf: () => null,
     rng: () => 0,
     log: silentLog,
     visionEnabled: true,
@@ -1242,6 +1243,56 @@ describe("invokeLlmReply: photo descriptions in history", () => {
     await invokeLlmReply(ctx, 999, d);
     const text = (llm.calls[0]?.system as Array<{ text: string }>).map((b) => b.text).join("\n");
     expect(text).toContain("Olha: [фото]");
+  });
+});
+
+describe("invokeLlmReply: telegram handles", () => {
+  const opened: InvokeLlmDeps[] = [];
+
+  afterEach(() => {
+    for (const d of opened.splice(0)) d.db.close();
+  });
+
+  it("shows handles next to names in history, thread and the current message", async () => {
+    const calls: Array<{ system: SystemContent; content: UserContent }> = [];
+    const client: LlmClient = {
+      reply: async (system, content) => {
+        calls.push({ system, content });
+        return {
+          text: "ок",
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        };
+      },
+    };
+    const d = makeBaseDeps({
+      llmClient: client,
+      usernameOf: (id) => (id === 8 ? "olya_k" : id === 7 ? "andriy" : null),
+    });
+    opened.push(d);
+    makeMessageAppender(d.db)({
+      chatId: 1,
+      messageId: 10,
+      ts: 999_000,
+      senderId: 8,
+      senderName: "Olha",
+      text: "я тут",
+      kind: "text",
+    });
+    const { ctx } = makeCtx({ text: "Кицюня, що думаєш про @olya_k?" });
+    (ctx.from as { username?: string }).username = "andriy";
+    (ctx.message as { reply_to_message?: unknown }).reply_to_message = {
+      message_id: 10,
+      from: { id: 8, first_name: "Olha", username: "olya_k" },
+      text: "я тут",
+    };
+    await invokeLlmReply(ctx, 999, d);
+
+    const text = (calls[0]?.system as Array<{ text: string }>).map((b) => b.text).join("\n");
+    expect(text).toContain("Olha (@olya_k): я тут");
+    expect(calls[0]?.content).toBe("Andriy (@andriy): Кицюня, що думаєш про @olya_k?");
   });
 });
 

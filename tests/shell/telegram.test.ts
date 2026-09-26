@@ -35,6 +35,24 @@ describe("toMessageInput", () => {
     expect(input?.mediaGroupId).toBeUndefined();
   });
 
+  it("captures the sender's and the reply author's usernames", () => {
+    const ctx = makeCtx({
+      message_id: 3,
+      chat: { id: 100 },
+      from: { id: 7, first_name: "Andriy", username: "andriy" },
+      date: 1,
+      text: "привіт",
+      reply_to_message: {
+        message_id: 2,
+        from: { id: 8, first_name: "Olha", username: "olya_k" },
+        text: "тут",
+      },
+    });
+    const input = toMessageInput(ctx);
+    expect(input?.senderUsername).toBe("andriy");
+    expect(input?.replyTo?.authorUsername).toBe("olya_k");
+  });
+
   it("captures largest photo size and unique id", () => {
     const ctx = makeCtx({
       message_id: 1,

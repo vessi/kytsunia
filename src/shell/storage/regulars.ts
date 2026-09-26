@@ -9,6 +9,8 @@ export type RegularProfile = {
   lastMessageTs: number | null;
   generatedAt: number;
   manualNotes: string | null;
+  // З таблиці users; null, якщо людина без @username або ще не писала після деплою.
+  username?: string | null;
 };
 
 export type UpsertInput = Omit<RegularProfile, "generatedAt" | "manualNotes">;
@@ -32,6 +34,7 @@ interface RegularRow {
   last_message_ts: number | null;
   generated_at: number;
   manual_notes: string | null;
+  username?: string | null;
 }
 
 function rowToProfile(row: RegularRow): RegularProfile {
@@ -44,6 +47,7 @@ function rowToProfile(row: RegularRow): RegularProfile {
     lastMessageTs: row.last_message_ts,
     generatedAt: row.generated_at,
     manualNotes: row.manual_notes,
+    username: row.username ?? null,
   };
 }
 
@@ -61,11 +65,11 @@ export function makeRegularsStore(db: Db): RegularsStore {
       generated_at = excluded.generated_at
   `);
 
-  const getStmt = db.prepare("SELECT * FROM regulars WHERE user_id = ? AND chat_id = ?");
-  const listStmt = db.prepare("SELECT * FROM regulars ORDER BY generated_at DESC");
-  const listByChatStmt = db.prepare(
-    "SELECT * FROM regulars WHERE chat_id = ? ORDER BY message_count DESC",
-  );
+  // LEFT JOIN users: хендл живе там, бо профіль — на чат, а хендл — на людину.
+  const SELECT = `SELECT r.*, u.username FROM regulars r LEFT JOIN users u ON u.user_id = r.user_id`;
+  const getStmt = db.prepare(`${SELECT} WHERE r.user_id = ? AND r.chat_id = ?`);
+  const listStmt = db.prepare(`${SELECT} ORDER BY r.generated_at DESC`);
+  const listByChatStmt = db.prepare(`${SELECT} WHERE r.chat_id = ? ORDER BY r.message_count DESC`);
   const deleteStmt = db.prepare("DELETE FROM regulars WHERE user_id = ? AND chat_id = ?");
   const deleteAllForUserStmt = db.prepare("DELETE FROM regulars WHERE user_id = ?");
   const updateNotesStmt = db.prepare(

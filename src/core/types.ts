@@ -4,6 +4,8 @@ export type MessageInput = {
   chatId: number;
   senderId: number;
   senderName: string;
+  // Telegram @username без @, якщо є.
+  senderUsername?: string;
   ts: number;
   replyTo?: ReplyContext;
   forwardOrigin?: ForwardOrigin;
@@ -19,6 +21,7 @@ export type ReplyContext = {
   messageId: number;
   authorId: number;
   authorName: string;
+  authorUsername?: string;
   text?: string;
   animationFileId?: string;
   stickerFileId?: string;

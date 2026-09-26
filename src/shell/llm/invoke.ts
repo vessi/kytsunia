@@ -14,6 +14,7 @@ import type { TypingStarter } from "../typing.js";
 import { type LlmClient, type ReplySource, webSearchTool } from "./anthropic.js";
 import { buildLlmRequest, type RecentMessage } from "./context.js";
 import type { PhotoDescriber } from "./describe-photo.js";
+import { displayWithHandle } from "./names.js";
 import { withSpecialInstructions } from "./persona.js";
 import { calculateCost } from "./pricing.js";
 import { collectChatProfiles } from "./profiles.js";
@@ -41,6 +42,8 @@ export type InvokeLlmDeps = {
   // Ігноровані: їхні фото в базу не пишуться, але ціль відповіді приходить
   // прямо з Telegram — її фото теж не показуємо моделі. Текст лишається.
   isIgnored: (userId: number) => boolean;
+  // @username за user_id, щоб модель звʼязувала хендли з іменами.
+  usernameOf: (userId: number) => string | null;
   rng: () => number;
   log: Logger;
   // Vision
@@ -318,7 +321,13 @@ export async function invokeLlmReply(
     const replyFromIgnored =
       replyMessage?.from !== undefined && deps.isIgnored(replyMessage.from.id);
     const thread = replyMessage
-      ? collectThread(deps.db, chatId, replyTargetFromMessage(replyMessage), deps.threadDepth)
+      ? collectThread(
+          deps.db,
+          chatId,
+          replyTargetFromMessage(replyMessage),
+          deps.threadDepth,
+          deps.usernameOf,
+        )
       : [];
 
     // 5. Зібрати фото — ТІЛЬКИ ті, на які явно посилаємось:
@@ -381,7 +390,7 @@ export async function invokeLlmReply(
       notesByRow.set(i, notes);
     }
     const recent: RecentMessage[] = recentRows.map((row, i) => ({
-      senderName: row.senderName,
+      senderName: displayWithHandle(row.senderName, deps.usernameOf(row.senderId)),
       text: row.text,
       photos: [],
       photoNotes: notesByRow.get(i) ?? [],
@@ -396,7 +405,11 @@ export async function invokeLlmReply(
     );
     const persona = search ? `${base}\n\n${deps.searchPrompt}` : base;
     const { system, userMessage } = buildLlmRequest(
-      { senderName: userName, text, photos: currentPhotos },
+      {
+        senderName: displayWithHandle(userName, ctx.from?.username),
+        text,
+        photos: currentPhotos,
+      },
       recent,
       persona,
       profiles,
