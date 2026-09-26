@@ -470,9 +470,14 @@ export async function invokeLlmReply(
 
       // Порожній текст буває, коли модель вичерпала бюджет або сервер зупинив цикл
       // пошуку (pause_turn) до фінальної відповіді. На порожньому Telegram впаде.
+      // Fable ще й відмовляє класифікатором (refusal): тоді це не «загубила».
       const replyText =
         reply.text.trim() ||
-        (search ? "Нічого путнього не знайшла." : "Загубила думку, спитай ще раз.");
+        (reply.stopReason === "refusal"
+          ? "Про це не буду."
+          : search
+            ? "Нічого путнього не знайшла."
+            : "Загубила думку, спитай ще раз.");
       const sources = search ? (reply.sources ?? []).slice(0, MAX_SOURCES) : [];
       const sent = await ctx.reply(withSources(replyText, sources), {
         reply_to_message_id: replyTo,

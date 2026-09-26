@@ -6,6 +6,7 @@ describe("resolveModel", () => {
     expect(resolveModel("opus")).toBe("claude-opus-5-5");
     expect(resolveModel("Sonnet")).toBe("claude-sonnet-5");
     expect(resolveModel(" haiku ")).toBe("claude-haiku-4-5");
+    expect(resolveModel("fable")).toBe("claude-fable-5-1");
   });
 
   it("accepts full ids that have pricing", () => {

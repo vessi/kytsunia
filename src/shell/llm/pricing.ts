@@ -27,6 +27,20 @@ const PRICING: Record<string, Pricing> = {
     cacheRead: 0.5,
     cacheWrite: 6.25,
   },
+  // Fable: найдорожчі, з класифікаторами безпеки (stop_reason: refusal).
+  // Кеш-читання у 5.1 — 2.5% від входу, у 5 — 10%.
+  "claude-fable-5-1": {
+    input: 10.0,
+    output: 50.0,
+    cacheRead: 0.25,
+    cacheWrite: 12.5,
+  },
+  "claude-fable-5": {
+    input: 10.0,
+    output: 50.0,
+    cacheRead: 1.0,
+    cacheWrite: 12.5,
+  },
   // Вийшов 2026-09-21. Дешевший за Opus 5, а кеш-читання — 5% від входу, не 10%.
   "claude-opus-5-5": {
     input: 4.0,
