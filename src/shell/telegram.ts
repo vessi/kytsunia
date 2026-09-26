@@ -11,6 +11,7 @@ import type { ProfileRefreshDeps, RefreshOptions } from "./llm/profile-refresh.j
 import { refreshProfiles } from "./llm/profile-refresh.js";
 import type { InvokeRosterDeps } from "./llm/roster.js";
 import { invokeRoster } from "./llm/roster.js";
+import { syncUsernames } from "./llm/sync-usernames.js";
 import type { ChatSettingsStore } from "./storage/chat-settings.js";
 import type { IgnoredUsersStore } from "./storage/ignored.js";
 import type { InstructionStore } from "./storage/instructions.js";
@@ -18,6 +19,7 @@ import type { LlmCallStore } from "./storage/llm-calls.js";
 import type { OptOutsStore } from "./storage/opt-outs.js";
 import type { RegularsStore } from "./storage/regulars.js";
 import type { DynamicRuleStore } from "./storage/rules.js";
+import type { UsersStore } from "./storage/users.js";
 import { formatKyivDate, startOfKyivDay } from "./time.js";
 import { formatUsageReport } from "./usage-report.js";
 
@@ -40,6 +42,7 @@ export type ExecuteDeps = {
   // Глобальна стеля повідомлень у дайджесті; чат може замінити її будь-якою.
   digestMaxCount: number;
   profileRefresh: ProfileRefreshDeps;
+  usersStore: UsersStore;
   profileRefreshOptions: Pick<RefreshOptions, "threshold" | "days" | "limitMessages" | "model">;
   // Чати, де оновлення профілів уже йде: другий запит поспіль не запускаємо.
   profileRefreshInProgress: Set<number>;
@@ -378,7 +381,14 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
         requestedByUserId: ctx.from?.id ?? 0,
         requestedByName: ctx.from?.first_name ?? "",
       })
-        .then((r) => {
+        .then(async (r) => {
+          // Хендли постійних: Telegram не віддає історію, тож питаємо по одному.
+          const ids = deps.regularsStore.listByChat(action.chatId).map((p) => p.userId);
+          const handles = await syncUsernames(
+            { api, usersStore: deps.usersStore, log: deps.profileRefresh.log },
+            action.chatId,
+            ids,
+          );
           const parts = [
             r.processed === 0
               ? "Оновлювати нема кого: постійних учасників не набралось."
@@ -387,6 +397,7 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
           if (r.failed > 0) parts.push(`Не вийшло: ${r.failed}.`);
           if (r.skipped > 0) parts.push(`Пропустила (просили не профайлити): ${r.skipped}.`);
           if (r.filtered > 0) parts.push(`Відкинула через OPSEC: ${r.filtered}.`);
+          if (ids.length > 0) parts.push(`Хендлів знаю: ${handles.withHandle} з ${ids.length}.`);
           if (r.processed > 0) parts.push(`Коштувало $${r.totalCostUsd.toFixed(3)}.`);
           return api.sendMessage(action.chatId, parts.join(" "), {
             reply_parameters: { message_id: action.replyTo },

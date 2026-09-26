@@ -282,6 +282,7 @@ bot.on("message", async (ctx) => {
           model: config.KYTSUNIA_PROFILE_MODEL,
         },
         profileRefreshInProgress,
+        usersStore,
         digestMaxCount: config.KYTSUNIA_DIGEST_MAX_COUNT,
       });
     } catch (err) {

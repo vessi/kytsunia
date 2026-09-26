@@ -1,12 +1,15 @@
 import { parseArgs } from "node:util";
 import { loadConfig } from "../src/config.js";
 import { makeLlmClient } from "../src/shell/llm/anthropic.js";
+import { Bot } from "grammy";
 import { refreshProfiles } from "../src/shell/llm/profile-refresh.js";
+import { syncUsernames } from "../src/shell/llm/sync-usernames.js";
 import { createLogger } from "../src/shell/logger.js";
 import { openDb } from "../src/shell/storage/db.js";
 import { makeLlmCallStore } from "../src/shell/storage/llm-calls.js";
 import { makeOptOutsStore } from "../src/shell/storage/opt-outs.js";
 import { makeRegularsStore } from "../src/shell/storage/regulars.js";
+import { makeUsersStore } from "../src/shell/storage/users.js";
 
 const { values } = parseArgs({
   options: {
@@ -66,11 +69,12 @@ log.info(opts, "refresh-regulars starting");
 
 const db = openDb(config.DB_PATH, log);
 const optOutsStore = makeOptOutsStore(db);
+const regularsStore = makeRegularsStore(db);
 const result = await refreshProfiles(
   {
     db,
     llmClient: makeLlmClient(config.ANTHROPIC_API_KEY),
-    regularsStore: makeRegularsStore(db),
+    regularsStore,
     llmCallStore: makeLlmCallStore(db),
     optedOutUserIds: () => new Set(optOutsStore.list()),
     log,
@@ -86,6 +90,16 @@ const result = await refreshProfiles(
       : undefined,
   },
 );
+
+// Хендли постійних чату через Bot API — без polling, лише виклики.
+if (opts.chatId !== undefined && !opts.dryRun) {
+  const ids = regularsStore.listByChat(opts.chatId).map((p) => p.userId);
+  await syncUsernames(
+    { api: new Bot(config.BOT_TOKEN).api, usersStore: makeUsersStore(db), log },
+    opts.chatId,
+    ids,
+  );
+}
 
 log.info({ ...result, totalCostUsd: result.totalCostUsd.toFixed(4) }, "refresh-regulars complete");
 db.close();
