@@ -124,6 +124,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     maxPhotosPerAlbum: 5,
     albumDebounceMs: 1500,
     threadDepth: 5,
+    replyMaxTokens: 500,
     describePhoto: vi.fn(async () => null),
     describeMaxPerReply: 3,
     sleep: vi.fn().mockResolvedValue(undefined),
@@ -1243,6 +1244,61 @@ describe("invokeLlmReply: photo descriptions in history", () => {
     await invokeLlmReply(ctx, 999, d);
     const text = (llm.calls[0]?.system as Array<{ text: string }>).map((b) => b.text).join("\n");
     expect(text).toContain("Olha: [фото]");
+  });
+});
+
+describe("invokeLlmReply: output budget and long replies", () => {
+  const opened: InvokeLlmDeps[] = [];
+
+  afterEach(() => {
+    for (const d of opened.splice(0)) d.db.close();
+  });
+
+  function makeLlm(text: string) {
+    const calls: Array<{ maxTokens?: number }> = [];
+    const client: LlmClient = {
+      reply: async (_s, _c, _m, maxTokens) => {
+        calls.push(maxTokens !== undefined ? { maxTokens } : {});
+        return { text, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 };
+      },
+    };
+    return { client, calls };
+  }
+
+  it("passes the configured reply budget to the model", async () => {
+    const llm = makeLlm("ок");
+    const d = makeBaseDeps({ llmClient: llm.client, replyMaxTokens: 1234 });
+    opened.push(d);
+    const { ctx } = makeCtx({ text: "Кицюня, привіт" });
+    await invokeLlmReply(ctx, 999, d);
+    expect(llm.calls[0]?.maxTokens).toBe(1234);
+  });
+
+  it("splits a long reply into several messages and persists each chunk", async () => {
+    const long = `${"а".repeat(3000)}\n\n${"б".repeat(3000)}`;
+    const llm = makeLlm(long);
+    const appendMessage = vi.fn();
+    const d = makeBaseDeps({ llmClient: llm.client, appendMessage });
+    opened.push(d);
+    const { ctx, reply } = makeCtx({ text: "Кицюня, розкажи довго" });
+    reply.mockImplementation(async (text: string) => ({
+      message_id: 100 + reply.mock.calls.length,
+      date: 1,
+      text,
+    }));
+    await invokeLlmReply(ctx, 999, d);
+
+    expect(reply).toHaveBeenCalledTimes(2);
+    expect(reply.mock.calls[0]?.[1]).toMatchObject({ reply_to_message_id: 999 });
+    expect(appendMessage).toHaveBeenCalledTimes(2);
+    expect(appendMessage.mock.calls[0]?.[0]).toMatchObject({
+      messageId: 101,
+      text: "а".repeat(3000),
+    });
+    expect(appendMessage.mock.calls[1]?.[0]).toMatchObject({
+      messageId: 102,
+      text: "б".repeat(3000),
+    });
   });
 });
 

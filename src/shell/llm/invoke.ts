@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import { splitForTelegram } from "../chunks.js";
 import type { Logger } from "../logger.js";
 import type { ChatSettingsStore } from "../storage/chat-settings.js";
 import type { Db } from "../storage/db.js";
@@ -46,6 +47,8 @@ export type InvokeLlmDeps = {
   usernameOf: (userId: number) => string | null;
   rng: () => number;
   log: Logger;
+  // Бюджет вихідних токенів відповіді, разом із роздумами моделі.
+  replyMaxTokens: number;
   // Vision
   visionEnabled: boolean;
   photoFetcher: PhotoFetcher;
@@ -84,8 +87,8 @@ const RATE_LIMIT_REPLIES = [
   "Іди читай книжку, я в режимі економії.",
 ];
 
-// З пошуком у бюджет відповіді входять ще й запити до пошуку — 500 може не вистачити.
-const SEARCH_MAX_TOKENS = 1024;
+// З пошуком у бюджет відповіді входять ще й запити до пошуку — додаємо зверху.
+const SEARCH_EXTRA_TOKENS = 512;
 
 // Більше двох посилань у чаті — вже простирадло.
 const MAX_SOURCES = 2;
@@ -419,10 +422,14 @@ export async function invokeLlmReply(
 
     try {
       const reply = search
-        ? await deps.llmClient.reply(system, userMessage, model, SEARCH_MAX_TOKENS, {
-            tools: [webSearchTool(deps.searchMaxUses)],
-          })
-        : await deps.llmClient.reply(system, userMessage, model);
+        ? await deps.llmClient.reply(
+            system,
+            userMessage,
+            model,
+            deps.replyMaxTokens + SEARCH_EXTRA_TOKENS,
+            { tools: [webSearchTool(deps.searchMaxUses)] },
+          )
+        : await deps.llmClient.reply(system, userMessage, model, deps.replyMaxTokens);
       const cost = calculateCost(model, {
         inputTokens: reply.inputTokens,
         outputTokens: reply.outputTokens,
@@ -469,23 +476,40 @@ export async function invokeLlmReply(
             ? "Нічого путнього не знайшла."
             : "Загубила думку, спитай ще раз.");
       const sources = search ? (reply.sources ?? []).slice(0, MAX_SOURCES) : [];
-      const sent = await ctx.reply(withSources(replyText, sources), {
-        reply_to_message_id: replyTo,
-        ...(sources.length > 0 ? { link_preview_options: { is_disabled: true } } : {}),
-      });
+      // Довга відповідь іде кількома повідомленнями, як дайджест. Джерела
+      // дописуємо лише до останнього шматка й лише при надсиланні: в історію
+      // вони не йдуть, щоб не засмічувати контекст.
+      const chunks = splitForTelegram(replyText);
+      const lastIdx = chunks.length - 1;
+      const sentAll: Array<{ message_id: number; date: number }> = [];
+      for (const [i, chunk] of chunks.entries()) {
+        const isLast = i === lastIdx;
+        const outgoing = isLast ? withSources(chunk, sources) : chunk;
+        sentAll.push(
+          await ctx.reply(outgoing, {
+            ...(i === 0 ? { reply_to_message_id: replyTo } : {}),
+            ...(isLast && sources.length > 0
+              ? { link_preview_options: { is_disabled: true } }
+              : {}),
+          }),
+        );
+      }
       // Зберігаємо власну відповідь — без цього reply-chain «user → bot → user»
-      // не зможе пройтися назад до фото.
+      // не зможе пройтися назад до фото. Кожен шматок — окремим рядком, бо
+      // відповісти можуть на будь-який з них.
       try {
-        deps.appendMessage({
-          chatId,
-          messageId: sent.message_id,
-          ts: sent.date * 1000,
-          senderId: deps.botUserId,
-          senderName: deps.botName,
-          text: replyText,
-          kind: "text",
-          replyTo: { messageId: replyTo, authorId: userId, authorName: userName },
-        });
+        for (const [i, sent] of sentAll.entries()) {
+          deps.appendMessage({
+            chatId,
+            messageId: sent.message_id,
+            ts: sent.date * 1000,
+            senderId: deps.botUserId,
+            senderName: deps.botName,
+            text: chunks[i] ?? "",
+            kind: "text",
+            replyTo: { messageId: replyTo, authorId: userId, authorName: userName },
+          });
+        }
       } catch (persistErr) {
         // Не валимо UX через помилку запису — просто логуємо.
         deps.log.warn(

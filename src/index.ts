@@ -119,6 +119,7 @@ const invokeLlmDeps: InvokeLlmDeps = {
   digestModel: config.KYTSUNIA_DIGEST_MODEL,
   chatSettings,
   persona: personaFor,
+  replyMaxTokens: config.KYTSUNIA_REPLY_MAX_TOKENS,
   defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
   globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
   recentContextSize: 10,

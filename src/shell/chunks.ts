@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import type { Message } from "grammy/types";
 
 // Ліміт одного повідомлення в Telegram.
 export const TELEGRAM_MAX_CHARS = 4096;
@@ -45,9 +46,16 @@ export function splitForTelegram(text: string, max: number = TELEGRAM_MAX_CHARS)
  * Надсилає текст одним чи кількома повідомленнями. Перше — відповідь на
  * тригер, решта йдуть просто в чат, щоб не було пʼяти реплаїв на одне й те ж.
  */
-export async function replyInChunks(ctx: Context, text: string, replyTo: number): Promise<void> {
+export async function replyInChunks(
+  ctx: Context,
+  text: string,
+  replyTo: number,
+  extra: Parameters<Context["reply"]>[1] = {},
+): Promise<Message.TextMessage[]> {
   const chunks = splitForTelegram(text);
+  const sent: Message.TextMessage[] = [];
   for (const [i, chunk] of chunks.entries()) {
-    await ctx.reply(chunk, i === 0 ? { reply_to_message_id: replyTo } : {});
+    sent.push(await ctx.reply(chunk, i === 0 ? { ...extra, reply_to_message_id: replyTo } : extra));
   }
+  return sent;
 }
