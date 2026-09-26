@@ -27,6 +27,13 @@ const PRICING: Record<string, Pricing> = {
     cacheRead: 0.5,
     cacheWrite: 6.25,
   },
+  // Вийшов 2026-09-21. Дешевший за Opus 5, а кеш-читання — 5% від входу, не 10%.
+  "claude-opus-5-5": {
+    input: 4.0,
+    output: 20.0,
+    cacheRead: 0.2,
+    cacheWrite: 5.0,
+  },
   "claude-sonnet-4-6": {
     input: 3.0,
     output: 15.0,
