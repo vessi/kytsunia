@@ -6,17 +6,16 @@ import type { Db } from "../storage/db.js";
 import type { InstructionStore } from "../storage/instructions.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
 import {
-  getRecentMessages,
+  getAnchoredRecentMessages,
   type MessageAppender,
   type RecentMessageRow,
 } from "../storage/messages.js";
 import type { RegularsStore } from "../storage/regulars.js";
 import type { TypingStarter } from "../typing.js";
-import { type LlmClient, type ReplySource, webSearchTool } from "./anthropic.js";
+import { type CacheTtl, type LlmClient, type ReplySource, webSearchTool } from "./anthropic.js";
 import { buildLlmRequest, type RecentMessage } from "./context.js";
 import type { PhotoDescriber } from "./describe-photo.js";
 import { displayWithHandle } from "./names.js";
-import { withSpecialInstructions } from "./persona.js";
 import { calculateCost } from "./pricing.js";
 import { collectChatProfiles } from "./profiles.js";
 import type { FetchedPhoto, PhotoFetcher } from "./telegram-photos.js";
@@ -49,6 +48,7 @@ export type InvokeLlmDeps = {
   log: Logger;
   // Бюджет вихідних токенів відповіді, разом із роздумами моделі.
   replyMaxTokens: number;
+  cacheTtl: CacheTtl;
   // Vision
   visionEnabled: boolean;
   photoFetcher: PhotoFetcher;
@@ -314,7 +314,9 @@ export async function invokeLlmReply(
     }
 
     // 4. Зібрати recent context (логічні повідомлення з альбомами вже згрупованими).
-    const recentRows = getRecentMessages(deps.db, chatId, deps.recentContextSize, replyTo);
+    // Якорене вікно: від recentContextSize до 2x повідомлень, стабільне між
+    // кроками, щоб блок історії читався з кешу.
+    const recentRows = getAnchoredRecentMessages(deps.db, chatId, deps.recentContextSize, replyTo);
     // Усі профілі чату, не лише авторів останніх повідомлень: інакше «що
     // думаєш про Олю?» приходить без Олі, щойно вона хвилину помовчала.
     const profiles = collectChatProfiles(deps.regularsStore, chatId, deps.botUserId);
@@ -400,13 +402,12 @@ export async function invokeLlmReply(
       photoCount: row.photos.length,
     }));
 
-    // Інструкції адміна й пошуку дописуємо в кінець персони, а не окремим
-    // блоком: так вони потрапляють у той самий кешований префікс.
-    const base = withSpecialInstructions(
-      deps.persona(model, digestModel, deps.chatSettings.getPersona(chatId)),
-      deps.instructionStore.list(chatId).map((i) => i.text),
-    );
+    // Інструкції адміна йдуть у блок чату (разом із профілями), щоб персона
+    // лишалась спільним кешем для всіх чатів. Промпт пошуку — у персону: у
+    // пошукового запиту й так інший префікс через tools.
+    const base = deps.persona(model, digestModel, deps.chatSettings.getPersona(chatId));
     const persona = search ? `${base}\n\n${deps.searchPrompt}` : base;
+    const instructions = deps.instructionStore.list(chatId).map((i) => i.text);
     const { system, userMessage } = buildLlmRequest(
       {
         senderName: displayWithHandle(userName, ctx.from?.username),
@@ -418,6 +419,7 @@ export async function invokeLlmReply(
       profiles,
       thread,
       deps.now(),
+      { instructions, cacheTtl: deps.cacheTtl },
     );
 
     try {

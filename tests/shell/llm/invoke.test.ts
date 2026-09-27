@@ -125,6 +125,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     albumDebounceMs: 1500,
     threadDepth: 5,
     replyMaxTokens: 500,
+    cacheTtl: "1h",
     describePhoto: vi.fn(async () => null),
     describeMaxPerReply: 3,
     sleep: vi.fn().mockResolvedValue(undefined),
@@ -770,7 +771,7 @@ describe("invokeLlmReply: reply thread", () => {
     await invokeLlmReply(ctx, 500, deps);
 
     const system = llm.calls[0]?.system as Array<{ text: string }>;
-    const tail = system[1]?.text ?? "";
+    const tail = system.at(-1)?.text ?? "";
     expect(tail).toContain("Гілка, на яку відповідає користувач");
     expect(tail).toContain("Andriy: що взяти з віскі?\nКицюня: Lagavulin 16, не дякуй.");
     // Сама персона лишається чистим кешованим префіксом.
@@ -875,7 +876,7 @@ describe("invokeLlmReply: web search", () => {
     expect(system[0]?.text).toBe("PERSONA\n\nSEARCH RULES");
   });
 
-  it("puts this chat's admin instructions into the persona block, before the search prompt", async () => {
+  it("puts this chat's admin instructions into the chat block, keeping the persona shared", async () => {
     const llm = makeSearchLlm();
     const { ctx } = makeCtx({ text: "Кицюня, пошукай курс долара" });
     const list = vi.fn((chatId: number) =>
@@ -895,10 +896,12 @@ describe("invokeLlmReply: web search", () => {
 
     expect(list).toHaveBeenCalledWith(1);
     const system = llm.calls[0]?.system as Array<{ text: string; cache_control?: unknown }>;
-    expect(system[0]?.text).toBe(
-      "PERSONA\n\nСпеціальні інструкції від адміна для цього чату. Якщо вони суперечать правилам вище — виконуй інструкції:\n- Не згадуй котів.\n- Перший рядок.\n  Другий рядок.\n\nSEARCH RULES",
+    expect(system[0]?.text).toBe("PERSONA\n\nSEARCH RULES");
+    expect(system[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(system[1]?.text).toBe(
+      "Спеціальні інструкції від адміна для цього чату. Якщо вони суперечать правилам вище — виконуй інструкції:\n- Не згадуй котів.\n- Перший рядок.\n  Другий рядок.",
     );
-    expect(system[0]?.cache_control).toBeDefined();
+    expect(system[1]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   });
 
   it("puts the query into the message the model sees", async () => {

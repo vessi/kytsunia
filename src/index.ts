@@ -120,6 +120,7 @@ const invokeLlmDeps: InvokeLlmDeps = {
   chatSettings,
   persona: personaFor,
   replyMaxTokens: config.KYTSUNIA_REPLY_MAX_TOKENS,
+  cacheTtl: config.KYTSUNIA_CACHE_TTL,
   defaultDailyLimit: config.DEFAULT_DAILY_LLM_LIMIT,
   globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
   recentContextSize: 10,
@@ -185,6 +186,7 @@ const invokeRosterDeps: InvokeRosterDeps = {
   globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
   log,
   startTyping,
+  cacheTtl: config.KYTSUNIA_CACHE_TTL,
 };
 
 log.info(

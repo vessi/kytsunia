@@ -68,6 +68,9 @@ const envSchema = z.object({
   KYTSUNIA_PROFILE_DAYS: envValue(z.coerce.number().int().positive().default(30)),
   // Скільки останніх повідомлень людини йде в модель.
   KYTSUNIA_PROFILE_LIMIT_MESSAGES: envValue(z.coerce.number().int().positive().default(200)),
+  // Життя prompt-кешу: 5m або 1h. Година дорожча в записі (2x проти 1.25x), але
+  // звернення після паузи в 5–60 хв читають кеш замість писати заново.
+  KYTSUNIA_CACHE_TTL: envValue(z.enum(["5m", "1h"]).default("1h")),
   // Бюджет вихідних токенів звичайної відповіді. Модель думає в той самий
   // бюджет, тож 500 на «1-3 речення» вистачало впритул, а довша персона в
   // нього не влазить. Ліміт Telegram на повідомлення обходиться розбиттям.

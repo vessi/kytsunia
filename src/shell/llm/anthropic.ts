@@ -33,12 +33,16 @@ export type TextContent = {
 
 export type UserContent = string | Array<TextContent | ImageContent>;
 
+// Життя кешу. 5m — запис 1.25x від ціни входу, 1h — 2x; читання однакові.
+// Для чату з паузами між зверненнями година окупається з другого ж виклику.
+export type CacheTtl = "5m" | "1h";
+
 // Anthropic system-блок. cache_control: ephemeral робить префікс кандидатом на
-// prompt cache (TTL 5 хв). Ставити лише на стабільну частину префікса.
+// prompt cache. Ставити лише на стабільну частину префікса.
 export type SystemBlock = {
   type: "text";
   text: string;
-  cache_control?: { type: "ephemeral" };
+  cache_control?: { type: "ephemeral"; ttl?: CacheTtl };
 };
 
 export type SystemContent = string | SystemBlock[];

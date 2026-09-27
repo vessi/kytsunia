@@ -143,7 +143,7 @@ describe("buildDigestRequest", () => {
     expect(system).toEqual([{ type: "text", text: "PROMPT" }]);
   });
 
-  it("adds the chat profiles as a cached block after the prompt", () => {
+  it("adds the chat profiles after the prompt, without a cache breakpoint", () => {
     const { system } = buildDigestRequest([row()], "PROMPT", [
       { displayName: "Olha", profile: "Бігає." },
     ]);
@@ -151,7 +151,7 @@ describe("buildDigestRequest", () => {
     expect(system[0]).toEqual({ type: "text", text: "PROMPT" });
     expect(system[1]?.text).toContain("Профілі учасників");
     expect(system[1]?.text).toContain("Olha:\nБігає.");
-    expect(system[1]?.cache_control).toEqual({ type: "ephemeral" });
+    expect(system[1]?.cache_control).toBeUndefined();
   });
 
   it("puts the transcript and the message count in the user message", () => {

@@ -13,17 +13,56 @@ describe("buildLlmRequest", () => {
     expect(req.userMessage).toBe("Andriy: привіт");
   });
 
-  it("puts cache_control on the persona and profile blocks, not on the tail", () => {
+  it("caches persona, chat block and recent history; the tail stays uncached", () => {
     const req = buildLlmRequest(
       { senderName: "Andriy", text: "привіт" },
       [{ senderName: "Olha", text: "тут" }],
       "PERSONA",
       [{ displayName: "Andriy", profile: "PROFILE" }],
+      [{ senderName: "Olha", text: "тут" }],
+      1_000_000,
     );
-    expect(req.system).toHaveLength(3);
+    expect(req.system).toHaveLength(4);
     expect(req.system[0]?.cache_control).toEqual({ type: "ephemeral" });
     expect(req.system[1]?.cache_control).toEqual({ type: "ephemeral" });
-    expect(req.system[2]?.cache_control).toBeUndefined();
+    expect(req.system[2]?.text).toContain("Контекст останніх повідомлень");
+    expect(req.system[2]?.cache_control).toEqual({ type: "ephemeral" });
+    expect(req.system[3]?.cache_control).toBeUndefined();
+    expect(req.system[3]?.text).toContain("Зараз");
+    expect(req.system[3]?.text).toContain("Гілка");
+  });
+
+  it("passes the cache ttl through and can leave recent history uncached", () => {
+    const req = buildLlmRequest(
+      { senderName: "Andriy", text: "привіт" },
+      [{ senderName: "Olha", text: "тут" }],
+      "PERSONA",
+      [],
+      [],
+      undefined,
+      { cacheTtl: "1h", cacheRecent: false },
+    );
+    expect(req.system[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(req.system[1]?.cache_control).toBeUndefined();
+  });
+
+  it("puts admin instructions into the chat block together with the profiles", () => {
+    const req = buildLlmRequest(
+      { senderName: "Andriy", text: "привіт" },
+      [],
+      "PERSONA",
+      [{ displayName: "Olha", profile: "PROFILE" }],
+      [],
+      undefined,
+      { instructions: ["Хвали Олю."] },
+    );
+    expect(req.system[0]?.text).toBe("PERSONA");
+    expect(req.system[1]?.text).toContain("Спеціальні інструкції");
+    expect(req.system[1]?.text).toContain("- Хвали Олю.");
+    expect(req.system[1]?.text).toContain("PROFILE");
+    expect(req.system[1]?.text.indexOf("Хвали")).toBeLessThan(
+      req.system[1]?.text.indexOf("PROFILE") ?? -1,
+    );
   });
 
   it("appends recent context after persona", () => {
@@ -83,10 +122,11 @@ describe("buildLlmRequest", () => {
       [],
       1_000_000,
     );
-    expect(req.system).toHaveLength(3);
-    expect(req.system[2]?.cache_control).toBeUndefined();
-    expect(req.system[2]?.text).toContain("Контекст");
-    expect(req.system[2]?.text).not.toContain("PROFILE");
+    expect(req.system).toHaveLength(4);
+    expect(req.system[3]?.cache_control).toBeUndefined();
+    expect(req.system[3]?.text).toContain("Зараз");
+    expect(req.system[3]?.text).not.toContain("PROFILE");
+    expect(req.system[3]?.text).not.toContain("Контекст");
   });
 
   it("orders sections persona → profiles → recent", () => {
@@ -115,11 +155,13 @@ describe("buildLlmRequest", () => {
         { senderName: "Кицюня", text: "Lagavulin" },
       ],
     );
-    expect(req.system).toHaveLength(2);
-    const tail = req.system[1]?.text ?? "";
+    // persona | recent (кешований) | хвіст із гілкою
+    expect(req.system).toHaveLength(3);
+    expect(req.system[1]?.text).toContain("Контекст");
+    const tail = req.system[2]?.text ?? "";
     expect(tail).toContain("Гілка, на яку відповідає користувач");
     expect(tail).toContain("Andriy: що взяти?\nКицюня: Lagavulin");
-    expect(tail.indexOf("Контекст")).toBeLessThan(tail.indexOf("Гілка"));
+    expect(tail).not.toContain("Контекст");
     expect(req.system[0]?.text).toBe("PERSONA");
   });
 
@@ -146,11 +188,13 @@ describe("buildLlmRequest", () => {
       Date.UTC(2026, 8, 12, 5, 15),
     );
     expect(req.system[0]?.text).toBe("PERSONA");
-    const tail = req.system[1]?.text ?? "";
+    // Час — у некешованому хвості після блоку історії, ніколи в персоні чи історії.
+    expect(req.system[1]?.text).toContain("Контекст");
+    expect(req.system[1]?.text).not.toContain("Зараз");
+    const tail = req.system[2]?.text ?? "";
     expect(tail.startsWith("Зараз субота, 12 вересня 2026 р. о 08:15 за київським часом.")).toBe(
       true,
     );
-    expect(tail.indexOf("Зараз")).toBeLessThan(tail.indexOf("Контекст"));
   });
 
   it("adds the tail block for the date even with nothing else", () => {

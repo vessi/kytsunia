@@ -89,6 +89,8 @@ export function getRecentMessages(
   chatId: number,
   limit: number,
   excludeMsgId?: number,
+  // Лише повідомлення з msg_id більшим за це (для якореного вікна).
+  afterMsgId = 0,
 ): RecentMessageRow[] {
   // Беремо «лідерів» альбомів і одинаків. Лідер альбому — рядок з мінімальним
   // msg_id у групі: саме на ньому зазвичай caption.
@@ -100,6 +102,7 @@ export function getRecentMessages(
     FROM messages
     WHERE chat_id = ?
       AND msg_id != ?
+      AND msg_id > ?
       AND (text != '' OR photo_file_id IS NOT NULL)
     ORDER BY ts DESC
     LIMIT ?
@@ -107,7 +110,7 @@ export function getRecentMessages(
 
   // Запас в 5x грубо покриває альбоми до 5 фото; при більших — другий проход добере.
   const fetchLimit = Math.max(limit * 5, limit + 20);
-  const raw = rawStmt.all(chatId, excludeMsgId ?? 0, fetchLimit) as RawRow[];
+  const raw = rawStmt.all(chatId, excludeMsgId ?? 0, afterMsgId, fetchLimit) as RawRow[];
 
   // Згортаємо в логічні повідомлення: по media_group_id (для альбомів) або по
   // msg_id (для одинаків).
@@ -192,4 +195,31 @@ export function getRecentMessages(
 
   // Reverse: chronological order (oldest → newest), як було раніше.
   return rows.reverse();
+}
+
+/**
+ * Якорене вікно історії для кешування. Звичайне «останні N» зсувається на
+ * одне повідомлення щоразу, тож його префікс ніколи не збігається з кешем.
+ * Тут початок вікна рухається кроками по step (за msg_id): між кроками блок
+ * стабільний, і його можна кешувати. Розмір — від step до 2*step повідомлень.
+ * Якщо в id є дірки і повідомлень у вікні менше за step — беремо звичайні
+ * останні step, щоб не втрачати контекст заради кешу.
+ */
+export function getAnchoredRecentMessages(
+  db: Db,
+  chatId: number,
+  step: number,
+  excludeMsgId?: number,
+): RecentMessageRow[] {
+  const maxRow = db
+    .prepare(
+      `SELECT MAX(msg_id) as max_id FROM messages
+       WHERE chat_id = ? AND msg_id != ? AND (text != '' OR photo_file_id IS NOT NULL)`,
+    )
+    .get(chatId, excludeMsgId ?? 0) as { max_id: number | null };
+  if (maxRow.max_id === null) return [];
+  const anchor = Math.floor(maxRow.max_id / step) * step - step;
+  const rows = getRecentMessages(db, chatId, step * 2, excludeMsgId, anchor);
+  if (rows.length >= step) return rows;
+  return getRecentMessages(db, chatId, step, excludeMsgId);
 }

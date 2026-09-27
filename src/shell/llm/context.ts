@@ -1,5 +1,6 @@
 import { formatKyivNow } from "../time.js";
-import type { ImageContent, SystemBlock, UserContent } from "./anthropic.js";
+import type { CacheTtl, ImageContent, SystemBlock, UserContent } from "./anthropic.js";
+import { renderInstructionsBlock } from "./persona.js";
 import { type ProfileEntry, renderProfilesBlock } from "./profiles.js";
 import type { ThreadMessage } from "./thread.js";
 
@@ -22,11 +23,21 @@ export type CurrentMessage = {
   photos?: ReadonlyArray<{ mime: string; base64: string }>;
 };
 
+export type RequestOptions = {
+  // Спеціальні інструкції адміна: йдуть у блок чату разом із профілями, а не в
+  // персону, щоб персона лишалась спільним кешем для всіх чатів.
+  instructions?: readonly string[];
+  cacheTtl?: CacheTtl;
+  // Кешувати блок останніх повідомлень: має сенс лише з якореним вікном,
+  // інакше префікс не збігається ніколи.
+  cacheRecent?: boolean;
+};
+
 export type LlmRequest = {
-  // Масив, бо persona і профілі чату йдуть окремими блоками з cache_control:
-  // ephemeral, а recent (мінливий хвіст) — без кешу. Anthropic кешує префікс
-  // до останнього блоку з cache_control включно; окремий брейкпойнт на
-  // персоні лишає її в кеші, коли профілі перегенерували.
+  // Масив, бо блоки кешуються окремо. Anthropic кешує префікс до кожного
+  // блоку з cache_control включно, тож порядок — від найстабільнішого:
+  // персона (спільна для чатів) → блок чату (інструкції + профілі) →
+  // якорене вікно історії → некешований хвіст (час, гілка).
   system: SystemBlock[];
   userMessage: UserContent;
 };
@@ -74,7 +85,9 @@ export function buildLlmRequest(
   // Поточний час у мс. Без нього модель живе в даті свого навчання і відповідає
   // на «яке сьогодні число» навмання. Йде в змінний хвіст, тож кеш не зачіпає.
   nowMs?: number,
+  opts: RequestOptions = {},
 ): LlmRequest {
+  const cache = { type: "ephemeral" as const, ...(opts.cacheTtl ? { ttl: opts.cacheTtl } : {}) };
   // Маркери [фото N] нумеруються глобально, синхронно з порядком image-blocks
   // нижче (історія в хронологічному порядку, потім поточні фото).
   let photoCounter = 1;
@@ -95,16 +108,14 @@ export function buildLlmRequest(
   }
 
   // System розколотий на блоки:
-  //   [0] persona — стабільний префікс, кешуємо.
-  //   [1] профілі чату — стабільні до наступного «онови профілі», кешуємо.
-  //   [2] час + recent + гілка — мінливий хвіст, без кешу.
+  //   [0] persona — стабільний префікс, спільний для чатів, кешуємо.
+  //   [1] блок чату: інструкції + профілі — до наступної зміни, кешуємо.
+  //   [2] останні повідомлення — стабільні між кроками якоря, кешуємо.
+  //   [3] час + гілка — мінливий хвіст, без кешу.
   // Порожні блоки не додаємо, щоб не платити за порожній text.
   const tailSections: string[] = [];
   if (nowMs !== undefined) {
     tailSections.push(`Зараз ${formatKyivNow(nowMs)} за київським часом.`);
-  }
-  if (recentLines.length > 0) {
-    tailSections.push(`Контекст останніх повідомлень у чаті:\n${recentLines.join("\n")}`);
   }
   // Гілка йде останньою — найближче до самого питання. Повідомлення з неї
   // можуть дублювати recent: це нормально, цінність саме в позначці «на що
@@ -116,12 +127,20 @@ export function buildLlmRequest(
     );
   }
 
-  const system: SystemBlock[] = [
-    { type: "text", text: persona, cache_control: { type: "ephemeral" } },
-  ];
-  const profilesBlock = renderProfilesBlock(profiles);
-  if (profilesBlock) {
-    system.push({ type: "text", text: profilesBlock, cache_control: { type: "ephemeral" } });
+  const system: SystemBlock[] = [{ type: "text", text: persona, cache_control: cache }];
+  const chatSections = [
+    renderInstructionsBlock(opts.instructions ?? []),
+    renderProfilesBlock(profiles),
+  ].filter((s) => s.length > 0);
+  if (chatSections.length > 0) {
+    system.push({ type: "text", text: chatSections.join("\n\n"), cache_control: cache });
+  }
+  if (recentLines.length > 0) {
+    system.push({
+      type: "text",
+      text: `Контекст останніх повідомлень у чаті:\n${recentLines.join("\n")}`,
+      ...(opts.cacheRecent === false ? {} : { cache_control: cache }),
+    });
   }
   if (tailSections.length > 0) {
     system.push({ type: "text", text: tailSections.join("\n\n") });

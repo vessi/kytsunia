@@ -107,14 +107,13 @@ export function buildDigestRequest(
   profiles: readonly ProfileEntry[] = [],
   describe?: (uniqueId: string) => string | null,
 ): { system: SystemBlock[]; userMessage: string } {
-  // Промпт сам по собі коротший за мінімальний кешований префікс, тож
-  // брейкпойнт ставимо на профілях: разом з ними префікс уже вартий кешу, а
-  // змінюються вони лише після «онови профілі». Транскрипт щоразу інший —
-  // він у user message без кешу.
+  // Без cache_control: дайджести рідкі, тож запис кешу під окремим префіксом
+  // (промпт дайджесту + профілі) майже ніколи не читається, а коштує 1.25x.
+  // Транскрипт щоразу інший — він у user message.
   const system: SystemBlock[] = [{ type: "text", text: prompt }];
   const profilesBlock = renderProfilesBlock(profiles);
   if (profilesBlock) {
-    system.push({ type: "text", text: profilesBlock, cache_control: { type: "ephemeral" } });
+    system.push({ type: "text", text: profilesBlock });
   }
   const userMessage = `Ось останні ${rows.length} повідомлень чату:\n\n${renderTranscript(
     rows,

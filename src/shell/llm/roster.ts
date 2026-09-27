@@ -6,9 +6,9 @@ import type { InstructionStore } from "../storage/instructions.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
 import type { RegularProfile, RegularsStore } from "../storage/regulars.js";
 import type { TypingStarter } from "../typing.js";
-import type { LlmClient, SystemBlock } from "./anthropic.js";
+import type { CacheTtl, LlmClient, SystemBlock } from "./anthropic.js";
 import { displayWithHandle } from "./names.js";
-import { withSpecialInstructions } from "./persona.js";
+import { renderInstructionsBlock } from "./persona.js";
 import { calculateCost } from "./pricing.js";
 
 // Три речення на людину ≈ 100 токенів; на 20 людей — 2k тексту, а роздуми
@@ -45,6 +45,7 @@ export type InvokeRosterDeps = {
   globalDailyCap: number;
   log: Logger;
   startTyping: TypingStarter;
+  cacheTtl: CacheTtl;
 };
 
 /**
@@ -112,14 +113,15 @@ export async function invokeRoster(
     return;
   }
 
-  // Персона — той самий кешований блок, що й у звичайних відповідях; задача
-  // й профілі — змінний хвіст.
-  const persona = withSpecialInstructions(
-    deps.persona(model, digestModel, deps.chatSettings.getPersona(chatId)),
+  // Персона — той самий кешований блок, що й у звичайних відповідях;
+  // інструкції, задача й профілі — змінний хвіст.
+  const persona = deps.persona(model, digestModel, deps.chatSettings.getPersona(chatId));
+  const instructions = renderInstructionsBlock(
     deps.instructionStore.list(chatId).map((i) => i.text),
   );
   const system: SystemBlock[] = [
-    { type: "text", text: persona, cache_control: { type: "ephemeral" } },
+    { type: "text", text: persona, cache_control: { type: "ephemeral", ttl: deps.cacheTtl } },
+    ...(instructions ? [{ type: "text" as const, text: instructions }] : []),
     { type: "text", text: ROSTER_PROMPT },
   ];
   const userMessage = `${userName}: Кицюня, розкажи про учасників\n\nПрофілі:\n\n${renderRosterProfiles(profiles)}`;

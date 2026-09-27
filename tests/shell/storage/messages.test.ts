@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { MessageInput } from "../../../src/core/types.js";
 import {
+  getAnchoredRecentMessages,
   getRecentMessages,
   makeMessageAppender,
   makeMessageEditor,
@@ -192,5 +193,51 @@ describe("messages storage", () => {
     append(msg({ messageId: 3, text: "third", ts: 3000 }));
     const recent = getRecentMessages(db, 1, 10);
     expect(recent.map((r) => r.text)).toEqual(["first", "second", "third"]);
+  });
+});
+
+describe("getAnchoredRecentMessages", () => {
+  let db: Database.Database;
+  let append: ReturnType<typeof makeMessageAppender>;
+
+  beforeEach(() => {
+    db = openTestDb();
+    append = makeMessageAppender(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("keeps the window start fixed between anchor steps", () => {
+    for (let id = 1; id <= 57; id++) append(msg({ messageId: id, text: `m${id}` }));
+    // max 57 → anchor 40: msg_id 41..57, 17 повідомлень; наступне (58) — той самий початок.
+    const at57 = getAnchoredRecentMessages(db, 1, 10, 58);
+    expect(at57.map((r) => r.text)[0]).toBe("m41");
+    expect(at57).toHaveLength(17);
+    append(msg({ messageId: 58, text: "m58" }));
+    const at58 = getAnchoredRecentMessages(db, 1, 10, 59);
+    expect(at58.map((r) => r.text)[0]).toBe("m41");
+    expect(at58).toHaveLength(18);
+  });
+
+  it("moves the anchor at the step boundary and keeps between step and 2*step", () => {
+    for (let id = 1; id <= 60; id++) append(msg({ messageId: id, text: `m${id}` }));
+    // max 60 → anchor 50: 51..60, рівно 10.
+    const rows = getAnchoredRecentMessages(db, 1, 10, 61);
+    expect(rows.map((r) => r.text)).toEqual(Array.from({ length: 10 }, (_, i) => `m${51 + i}`));
+  });
+
+  it("excludes the trigger and falls back to plain recent when ids have gaps", () => {
+    // Дірки в id: лише кожне пʼяте повідомлення збережене.
+    for (let id = 5; id <= 100; id += 5) append(msg({ messageId: id, text: `m${id}` }));
+    const rows = getAnchoredRecentMessages(db, 1, 10, 100);
+    expect(rows).toHaveLength(10);
+    expect(rows.map((r) => r.text)).not.toContain("m100");
+    expect(rows.at(-1)?.text).toBe("m95");
+  });
+
+  it("returns nothing for an empty chat", () => {
+    expect(getAnchoredRecentMessages(db, 1, 10)).toEqual([]);
   });
 });

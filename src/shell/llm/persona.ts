@@ -164,9 +164,15 @@ export const OPSEC_RULES = `Безпека учасників (OPSEC). Під з
  * правилами — інакше немає сенсу їх давати.
  */
 export function withSpecialInstructions(prompt: string, instructions: readonly string[]): string {
-  if (instructions.length === 0) return prompt;
+  const block = renderInstructionsBlock(instructions);
+  return block ? `${prompt}\n\n${block}` : prompt;
+}
+
+/** Текст блоку інструкцій; порожній рядок, якщо інструкцій немає. */
+export function renderInstructionsBlock(instructions: readonly string[]): string {
+  if (instructions.length === 0) return "";
   const lines = instructions.map((t) => `- ${t.trim().replace(/\n/g, "\n  ")}`);
-  return `${prompt}\n\nСпеціальні інструкції від адміна для цього чату. Якщо вони суперечать правилам вище — виконуй інструкції:\n${lines.join("\n")}`;
+  return `Спеціальні інструкції від адміна для цього чату. Якщо вони суперечать правилам вище — виконуй інструкції:\n${lines.join("\n")}`;
 }
 
 /**

@@ -108,6 +108,7 @@ function makeDeps(
     globalDailyCap: 150,
     log: silentLog,
     startTyping: vi.fn(() => vi.fn()),
+    cacheTtl: "1h",
     ...overrides,
   };
 }
@@ -153,10 +154,11 @@ describe("invokeRoster", () => {
     await invokeRoster(ctx, 999, deps);
 
     const system = llm.calls[0]?.system as Array<{ text: string; cache_control?: unknown }>;
-    expect(system[0]?.text).toContain("P:claude-sonnet-5/claude-sonnet-5/Ти сумна сова.");
-    expect(system[0]?.text).toContain("Хвали Олю.");
-    expect(system[0]?.cache_control).toBeDefined();
-    expect(system[1]?.text).toBe(ROSTER_PROMPT);
+    expect(system[0]?.text).toBe("P:claude-sonnet-5/claude-sonnet-5/Ти сумна сова.");
+    expect(system[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(system[1]?.text).toContain("Хвали Олю.");
+    expect(system[1]?.cache_control).toBeUndefined();
+    expect(system[2]?.text).toBe(ROSTER_PROMPT);
     expect(llm.calls[0]?.content).toContain("Andriy:\nЛюбить віскі.");
     expect(llm.calls[0]?.content).toContain("Olha:\nБігає.");
     expect(reply.mock.calls[0]?.[0]).toBe("Andriy — любить віскі.\n\nOlha — бігає.");
