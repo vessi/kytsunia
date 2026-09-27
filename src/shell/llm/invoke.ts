@@ -41,7 +41,7 @@ export type InvokeLlmDeps = {
   instructionStore: InstructionStore;
   // Ігноровані: їхні фото в базу не пишуться, але ціль відповіді приходить
   // прямо з Telegram — її фото теж не показуємо моделі. Текст лишається.
-  isIgnored: (userId: number) => boolean;
+  isIgnored: (userId: number, chatId: number) => boolean;
   // @username за user_id, щоб модель звʼязувала хендли з іменами.
   usernameOf: (userId: number) => string | null;
   rng: () => number;
@@ -324,7 +324,7 @@ export async function invokeLlmReply(
     // репліку приходить до моделі без самої репліки.
     const replyMessage = ctx.message?.reply_to_message;
     const replyFromIgnored =
-      replyMessage?.from !== undefined && deps.isIgnored(replyMessage.from.id);
+      replyMessage?.from !== undefined && deps.isIgnored(replyMessage.from.id, chatId);
     const thread = replyMessage
       ? collectThread(
           deps.db,

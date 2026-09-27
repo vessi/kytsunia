@@ -6,6 +6,20 @@ export type FixedRule = {
   produce: (input: MessageInput, match: RegExpExecArray, state: State) => Action[];
 };
 
+type ActorRole = "owner" | "moderator" | "chat_admin" | "none";
+
+/**
+ * Хто пише: адмін бота, модератор чату (адмін з правом обмежувати), простий
+ * адмін чату чи ніхто з них. Адміни чату приходять із Telegram через shell і
+ * є лише для команд, яким вони потрібні.
+ */
+function actorRole(input: MessageInput, state: State): ActorRole {
+  if (state.policy.adminUserId === input.senderId) return "owner";
+  if (state.policy.chatModeratorUserIds?.has(input.senderId)) return "moderator";
+  if (state.policy.chatAdminUserIds?.has(input.senderId)) return "chat_admin";
+  return "none";
+}
+
 export const fixedRules: FixedRule[] = [
   {
     name: "address_react",
@@ -349,63 +363,92 @@ export const fixedRules: FixedRule[] = [
     produce: (input) => [{ kind: "invoke_roster", replyTo: input.messageId }],
   },
   {
-    // «Кицюня, не ігноруй» у відповідь на повідомлення людини. Admin only.
-    // Стоїть перед ignore_user лише для читабельності: патерни не перетинаються.
+    // «Кицюня, не ігноруй» у відповідь на повідомлення. Адмін бота знімає
+    // будь-який ігнор, модератор чату — лише ігнор свого чату.
     name: "unignore_user",
     pattern: /(К|к)ицюн(я|ю), не ігноруй(?:[!?.\s,]|$)/,
     produce: (input, _match, state) => {
-      if (state.policy.adminUserId !== input.senderId) return [];
+      const role = actorRole(input, state);
+      if (role === "none" || role === "chat_admin") return [];
       const target = input.replyTo;
       if (!target) return [{ kind: "reply_text", text: "Кого?", replyTo: input.messageId }];
       return [
         {
           kind: "unignore_user",
           replyTo: input.messageId,
+          chatId: input.chatId,
           userId: target.authorId,
           userName: target.authorName,
+          scope: role === "owner" ? "global" : "chat",
         },
       ];
     },
   },
   {
     // «Кицюня, ігноруй» у відповідь на повідомлення людини: більше жодної
-    // реакції на неї, крім «забудь мене». Себе й адміна не ігноруємо. Admin only.
+    // реакції на неї, крім «забудь мене». Адмін бота — глобально, модератор
+    // чату — у своєму чаті. Себе, бота, адміна бота й адмінів чату не чіпаємо.
     name: "ignore_user",
     pattern: /(К|к)ицюн(я|ю), ігноруй(?:[!?.\s,]|$)/,
     produce: (input, _match, state) => {
-      if (state.policy.adminUserId !== input.senderId) return [];
+      const role = actorRole(input, state);
+      if (role === "none" || role === "chat_admin") return [];
       const target = input.replyTo;
       if (!target) return [{ kind: "reply_text", text: "Кого?", replyTo: input.messageId }];
-      if (target.authorId === state.policy.botUserId || target.authorId === input.senderId) {
+      const protectedTarget =
+        target.authorId === state.policy.botUserId ||
+        target.authorId === input.senderId ||
+        (role === "moderator" &&
+          (target.authorId === state.policy.adminUserId ||
+            (state.policy.chatAdminUserIds?.has(target.authorId) ?? false)));
+      if (protectedTarget) {
         return [{ kind: "reply_text", text: "Оце вже ні.", replyTo: input.messageId }];
       }
       return [
         {
           kind: "ignore_user",
           replyTo: input.messageId,
+          chatId: input.chatId,
           userId: target.authorId,
           userName: target.authorName,
+          scope: role === "owner" ? "global" : "chat",
         },
       ];
     },
   },
   {
-    // «Кицюня, кого ігноруєш?» — список. Admin only.
+    // «Кицюня, кого ігноруєш?» — адміну бота всіх, модератору чату — свій чат.
     name: "list_ignored",
     pattern: /(К|к)ицюн(я|ю), кого ігноруєш\??/,
     produce: (input, _match, state) => {
-      if (state.policy.adminUserId !== input.senderId) return [];
-      return [{ kind: "list_ignored", replyTo: input.messageId }];
+      const role = actorRole(input, state);
+      if (role === "none" || role === "chat_admin") return [];
+      return [
+        {
+          kind: "list_ignored",
+          replyTo: input.messageId,
+          chatId: input.chatId,
+          scope: role === "owner" ? "global" : "chat",
+        },
+      ];
     },
   },
   {
     // «Кицюня, онови профілі» — перегенерувати профілі постійних учасників
-    // цього чату. Admin only.
+    // цього чату. Адмін бота або будь-який адмін чату.
     name: "refresh_profiles",
     pattern: /(К|к)ицюн(я|ю), онови профілі(?:[!?.\s,]|$)/,
     produce: (input, _match, state) => {
-      if (state.policy.adminUserId !== input.senderId) return [];
-      return [{ kind: "refresh_profiles", replyTo: input.messageId, chatId: input.chatId }];
+      const role = actorRole(input, state);
+      if (role === "none") return [];
+      return [
+        {
+          kind: "refresh_profiles",
+          replyTo: input.messageId,
+          chatId: input.chatId,
+          byOwner: role === "owner",
+        },
+      ];
     },
   },
   {

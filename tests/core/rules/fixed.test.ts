@@ -881,23 +881,31 @@ describe("fixedRules: digest_model", () => {
 
 describe("fixedRules: refresh_profiles", () => {
   const rule = findRule("refresh_profiles");
-  const admin = buildState({ policy: { adminUserId: 300 } });
-
-  it("produces the refresh action for the admin", () => {
-    for (const text of ["Кицюня, онови профілі", "Кицюня, онови профілі!"]) {
-      const m = rule.pattern.exec(text);
-      if (!m) throw new Error("no match");
-      expect(rule.produce(buildInput({ text }), m, admin)).toEqual([
-        { kind: "refresh_profiles", replyTo: 100, chatId: 200 },
-      ]);
-    }
+  const owner = buildState({ policy: { adminUserId: 300 } });
+  const withChatAdmins = buildState({
+    policy: { adminUserId: 300, chatAdminUserIds: new Set([500]), chatModeratorUserIds: new Set() },
   });
 
-  it("is silently ignored for non-admins", () => {
-    const input = buildInput({ text: "Кицюня, онови профілі", senderId: 301 });
-    const m = rule.pattern.exec(input.text);
+  function run(text: string, senderId: number, state: State) {
+    const m = rule.pattern.exec(text);
     if (!m) throw new Error("no match");
-    expect(rule.produce(input, m, admin)).toEqual([]);
+    return rule.produce(buildInput({ text, senderId }), m, state);
+  }
+
+  it("marks the bot owner's request as byOwner", () => {
+    expect(run("Кицюня, онови профілі", 300, owner)).toEqual([
+      { kind: "refresh_profiles", replyTo: 100, chatId: 200, byOwner: true },
+    ]);
+  });
+
+  it("lets any chat admin request it, not as owner", () => {
+    expect(run("Кицюня, онови профілі", 500, withChatAdmins)).toEqual([
+      { kind: "refresh_profiles", replyTo: 100, chatId: 200, byOwner: false },
+    ]);
+  });
+
+  it("is silently ignored for everyone else", () => {
+    expect(run("Кицюня, онови профілі", 301, withChatAdmins)).toEqual([]);
   });
 });
 
@@ -916,10 +924,19 @@ describe("fixedRules: roster", () => {
 });
 
 describe("fixedRules: ignore_user / unignore_user / list_ignored", () => {
-  const admin = buildState({ policy: { adminUserId: 300, botUserId: 9999 } });
-  const reply = { messageId: 5, authorId: 42, authorName: "Troll" };
+  // 300 — адмін бота, 500 — модератор чату, 600 — адмін чату без права
+  // обмежувати, 42 — звичайний учасник, 9999 — бот.
+  const state = buildState({
+    policy: {
+      adminUserId: 300,
+      botUserId: 9999,
+      chatAdminUserIds: new Set([500, 600]),
+      chatModeratorUserIds: new Set([500]),
+    },
+  });
+  const troll = { messageId: 5, authorId: 42, authorName: "Troll" };
 
-  function run(name: string, input: Partial<MessageInput>, state = admin) {
+  function run(name: string, input: Partial<MessageInput>) {
     const rule = findRule(name);
     const full = buildInput(input);
     const m = rule.pattern.exec(full.text);
@@ -927,46 +944,96 @@ describe("fixedRules: ignore_user / unignore_user / list_ignored", () => {
     return rule.produce(full, m, state);
   }
 
-  it("ignores the author of the replied-to message", () => {
-    expect(run("ignore_user", { text: "Кицюня, ігноруй", replyTo: reply })).toEqual([
-      { kind: "ignore_user", replyTo: 100, userId: 42, userName: "Troll" },
+  it("the bot owner ignores globally", () => {
+    expect(run("ignore_user", { text: "Кицюня, ігноруй", senderId: 300, replyTo: troll })).toEqual([
+      {
+        kind: "ignore_user",
+        replyTo: 100,
+        chatId: 200,
+        userId: 42,
+        userName: "Troll",
+        scope: "global",
+      },
     ]);
   });
 
+  it("a chat moderator ignores within the chat only", () => {
+    expect(run("ignore_user", { text: "Кицюня, ігноруй", senderId: 500, replyTo: troll })).toEqual([
+      {
+        kind: "ignore_user",
+        replyTo: 100,
+        chatId: 200,
+        userId: 42,
+        userName: "Troll",
+        scope: "chat",
+      },
+    ]);
+  });
+
+  it("a plain chat admin and a regular member get nothing", () => {
+    for (const senderId of [600, 42]) {
+      expect(run("ignore_user", { text: "Кицюня, ігноруй", senderId, replyTo: troll })).toEqual([]);
+      expect(
+        run("unignore_user", { text: "Кицюня, не ігноруй", senderId, replyTo: troll }),
+      ).toEqual([]);
+      expect(run("list_ignored", { text: "Кицюня, кого ігноруєш?", senderId })).toEqual([]);
+    }
+  });
+
   it("asks whom without a reply", () => {
-    expect(run("ignore_user", { text: "Кицюня, ігноруй" })).toEqual([
+    expect(run("ignore_user", { text: "Кицюня, ігноруй", senderId: 500 })).toEqual([
       { kind: "reply_text", text: "Кого?", replyTo: 100 },
     ]);
   });
 
-  it("refuses to ignore the bot or the admin", () => {
-    for (const authorId of [9999, 300]) {
+  it("nobody ignores the bot or themselves", () => {
+    for (const [senderId, authorId] of [
+      [300, 9999],
+      [300, 300],
+      [500, 9999],
+      [500, 500],
+    ] as const) {
       expect(
-        run("ignore_user", { text: "Кицюня, ігноруй!", replyTo: { ...reply, authorId } }),
+        run("ignore_user", { text: "Кицюня, ігноруй!", senderId, replyTo: { ...troll, authorId } }),
       ).toEqual([{ kind: "reply_text", text: "Оце вже ні.", replyTo: 100 }]);
     }
   });
 
+  it("a moderator cannot ignore the bot owner or other chat admins, the owner can", () => {
+    for (const authorId of [300, 600]) {
+      expect(
+        run("ignore_user", {
+          text: "Кицюня, ігноруй",
+          senderId: 500,
+          replyTo: { ...troll, authorId },
+        }),
+      ).toEqual([{ kind: "reply_text", text: "Оце вже ні.", replyTo: 100 }]);
+    }
+    expect(
+      run("ignore_user", {
+        text: "Кицюня, ігноруй",
+        senderId: 300,
+        replyTo: { ...troll, authorId: 600 },
+      }),
+    ).toMatchObject([{ kind: "ignore_user", userId: 600, scope: "global" }]);
+  });
+
+  it("scopes unignore and the list by role", () => {
+    expect(
+      run("unignore_user", { text: "Кицюня, не ігноруй", senderId: 300, replyTo: troll }),
+    ).toMatchObject([{ kind: "unignore_user", scope: "global" }]);
+    expect(
+      run("unignore_user", { text: "Кицюня, не ігноруй", senderId: 500, replyTo: troll }),
+    ).toMatchObject([{ kind: "unignore_user", scope: "chat" }]);
+    expect(run("list_ignored", { text: "Кицюня, кого ігноруєш?", senderId: 300 })).toEqual([
+      { kind: "list_ignored", replyTo: 100, chatId: 200, scope: "global" },
+    ]);
+    expect(run("list_ignored", { text: "Кицюня, кого ігноруєш?", senderId: 500 })).toEqual([
+      { kind: "list_ignored", replyTo: 100, chatId: 200, scope: "chat" },
+    ]);
+  });
+
   it("does not let «не ігноруй» fall into the ignore rule", () => {
     expect(findRule("ignore_user").pattern.test("Кицюня, не ігноруй")).toBe(false);
-    expect(run("unignore_user", { text: "Кицюня, не ігноруй", replyTo: reply })).toEqual([
-      { kind: "unignore_user", replyTo: 100, userId: 42, userName: "Troll" },
-    ]);
-  });
-
-  it("lists for the admin", () => {
-    expect(run("list_ignored", { text: "Кицюня, кого ігноруєш?" })).toEqual([
-      { kind: "list_ignored", replyTo: 100 },
-    ]);
-  });
-
-  it("is silently ignored for non-admins", () => {
-    for (const [name, text] of [
-      ["ignore_user", "Кицюня, ігноруй"],
-      ["unignore_user", "Кицюня, не ігноруй"],
-      ["list_ignored", "Кицюня, кого ігноруєш?"],
-    ] as const) {
-      expect(run(name, { text, senderId: 301, replyTo: reply })).toEqual([]);
-    }
   });
 });

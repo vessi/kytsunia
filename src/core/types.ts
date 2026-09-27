@@ -83,12 +83,30 @@ export type Action =
   | { kind: "reset_digest_max"; replyTo: number; chatId: number }
   // «Розкажи про учасників»: короткий портрет кожного постійного з профілів у базі.
   | { kind: "invoke_roster"; replyTo: number }
-  // Адмінський чорний список: userId з повідомлення, на яке відповіли.
-  | { kind: "ignore_user"; replyTo: number; userId: number; userName: string }
-  | { kind: "unignore_user"; replyTo: number; userId: number; userName: string }
-  | { kind: "list_ignored"; replyTo: number }
-  // Адмінське оновлення профілів постійних учасників цього чату.
-  | { kind: "refresh_profiles"; replyTo: number; chatId: number };
+  // Чорний список: userId з повідомлення, на яке відповіли. Адмін бота ігнорує
+  // глобально, адмін чату з правом обмежувати — лише у своєму чаті.
+  | {
+      kind: "ignore_user";
+      replyTo: number;
+      chatId: number;
+      userId: number;
+      userName: string;
+      scope: IgnoreScope;
+    }
+  | {
+      kind: "unignore_user";
+      replyTo: number;
+      chatId: number;
+      userId: number;
+      userName: string;
+      scope: IgnoreScope;
+    }
+  | { kind: "list_ignored"; replyTo: number; chatId: number; scope: IgnoreScope }
+  // Оновлення профілів постійних учасників цього чату: адмін бота без
+  // обмежень, адмін чату — раз на добу і без рахунку.
+  | { kind: "refresh_profiles"; replyTo: number; chatId: number; byOwner: boolean };
+
+export type IgnoreScope = "global" | "chat";
 
 export type DynamicRuleSpec = {
   pattern: string;
@@ -103,6 +121,11 @@ export type Policy = {
   // bot.botInfo.username при старті. Якщо undefined — тригер по @mention
   // вимкнено (наприклад у тестах без живого Telegram).
   botUsername?: string;
+  // Адміни поточного чату (з Telegram, кешовано). Заповнюється лише коли
+  // повідомлення схоже на команду, якій це потрібно.
+  chatAdminUserIds?: ReadonlySet<number>;
+  // Підмножина адмінів із правом обмежувати учасників: їм довіряємо ігнор.
+  chatModeratorUserIds?: ReadonlySet<number>;
 };
 
 export type State = {

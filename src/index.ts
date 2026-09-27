@@ -2,6 +2,7 @@ import { Bot } from "grammy";
 import { loadConfig } from "./config.js";
 import { match } from "./core/matcher.js";
 import type { State } from "./core/types.js";
+import { makeChatAdminsCache } from "./shell/chat-admins.js";
 import { loadInsults } from "./shell/insults.js";
 import { makeLlmClient } from "./shell/llm/anthropic.js";
 import { makePhotoDescriber } from "./shell/llm/describe-photo.js";
@@ -40,10 +41,11 @@ const instructionStore = makeInstructionStore(db);
 const ignoredUsersStore = makeIgnoredUsersStore(db);
 const chatSettings = makeChatSettingsStore(db);
 const profileRefreshInProgress = new Set<number>();
+const profileRefreshByChatAdminAt = new Map<number, number>();
 log.info({ dbPath: config.DB_PATH }, "database opened");
 log.info({ count: regularsStore.list().length }, "regulars loaded");
 log.info({ count: optOutsStore.list().length }, "profile opt-outs loaded");
-log.info({ count: ignoredUsersStore.list().length }, "ignored users loaded");
+log.info({ count: ignoredUsersStore.listGlobal().length }, "ignored users loaded");
 
 const insults = loadInsults("./data/insults.json", log);
 log.info({ count: insults.length }, "insults loaded");
@@ -126,7 +128,7 @@ const invokeLlmDeps: InvokeLlmDeps = {
   recentContextSize: 10,
   regularsStore,
   instructionStore,
-  isIgnored: (userId) => ignoredUsersStore.isIgnored(userId),
+  isIgnored: (userId, chatId) => ignoredUsersStore.isIgnored(userId, chatId),
   usernameOf: (userId) => usersStore.usernameOf(userId),
   rng: Math.random,
   log,
@@ -207,6 +209,10 @@ log.info(
   "web search configured",
 );
 
+const chatAdminsCache = makeChatAdminsCache(bot.api, log);
+// Команди, для яких треба знати адмінів чату. Груба перевірка, точну робить core.
+const CHAT_ADMIN_COMMAND_RE = /(К|к)ицюн(я|ю), (не ігноруй|ігноруй|кого ігноруєш|онови профілі)/;
+
 bot.on("message", async (ctx) => {
   const input = toMessageInput(ctx);
   if (!input) return;
@@ -229,7 +235,9 @@ bot.on("message", async (ctx) => {
 
   // Текст ігнорованого лишається в базі, щоб розмова не втрачала людину, а
   // от його фото моделі бачити не треба — посилання на них не зберігаємо.
-  appendMessage(ignoredUsersStore.isIgnored(input.senderId) ? withoutPhotos(input) : input);
+  appendMessage(
+    ignoredUsersStore.isIgnored(input.senderId, input.chatId) ? withoutPhotos(input) : input,
+  );
 
   log.debug(
     {
@@ -238,15 +246,28 @@ bot.on("message", async (ctx) => {
     "message received",
   );
 
+  // Адміни чату потрібні лише командам модерації, і лише в групах: один
+  // виклик Telegram на чат на десять хвилин у найгіршому разі.
+  const chatAdmins =
+    input.chatId < 0 && CHAT_ADMIN_COMMAND_RE.test(input.text)
+      ? await chatAdminsCache.get(input.chatId)
+      : undefined;
+
   const state: State = {
     dynamic: dynamicRuleStore.list(),
     policy: {
       ...(config.ADMIN_USER_ID !== undefined ? { adminUserId: config.ADMIN_USER_ID } : {}),
       botUserId,
       ...(bot.botInfo.username ? { botUsername: bot.botInfo.username } : {}),
+      ...(chatAdmins
+        ? { chatAdminUserIds: chatAdmins.admins, chatModeratorUserIds: chatAdmins.moderators }
+        : {}),
     },
     optedOutUserIds: new Set(optOutsStore.list()),
-    ignoredUserIds: new Set(ignoredUsersStore.list().map((u) => u.userId)),
+    ignoredUserIds: new Set([
+      ...ignoredUsersStore.listGlobal().map((u) => u.userId),
+      ...ignoredUsersStore.listInChat(input.chatId).map((u) => u.userId),
+    ]),
   };
 
   const actions = match(input, state);
@@ -285,6 +306,7 @@ bot.on("message", async (ctx) => {
           model: config.KYTSUNIA_PROFILE_MODEL,
         },
         profileRefreshInProgress,
+        profileRefreshByChatAdminAt,
         usersStore,
         digestMaxCount: config.KYTSUNIA_DIGEST_MAX_COUNT,
       });

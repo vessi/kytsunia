@@ -23,6 +23,8 @@ import type { UsersStore } from "./storage/users.js";
 import { formatKyivDate, startOfKyivDay } from "./time.js";
 import { formatUsageReport } from "./usage-report.js";
 
+const CHAT_ADMIN_REFRESH_INTERVAL_MS = 24 * 3600_000;
+
 export type ExecuteDeps = {
   insults: string[];
   rng: () => number;
@@ -46,6 +48,9 @@ export type ExecuteDeps = {
   profileRefreshOptions: Pick<RefreshOptions, "threshold" | "days" | "limitMessages" | "model">;
   // Чати, де оновлення профілів уже йде: другий запит поспіль не запускаємо.
   profileRefreshInProgress: Set<number>;
+  // Коли адмін чату востаннє оновлював профілі: раз на добу. У памʼяті — після
+  // рестарту можна ще раз, це прийнятно.
+  profileRefreshByChatAdminAt: Map<number, number>;
 };
 
 export function toMessageInput(ctx: Context): MessageInput | null {
@@ -337,29 +342,49 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       return;
     }
     case "ignore_user": {
-      const added = deps.ignoredUsersStore.add(
-        action.userId,
-        action.userName,
-        ctx.from?.id ?? null,
-      );
+      const by = ctx.from?.id ?? null;
+      const added =
+        action.scope === "global"
+          ? deps.ignoredUsersStore.addGlobal(action.userId, action.userName, by)
+          : deps.ignoredUsersStore.addInChat(action.chatId, action.userId, action.userName, by);
       const name = action.userName || String(action.userId);
-      const text = added ? `Добре, ${name} для мене більше не існує.` : `${name} і так у списку.`;
+      const where = action.scope === "chat" ? " у цьому чаті" : "";
+      const text = added
+        ? `Добре, ${name} для мене більше не існує${where}.`
+        : `${name} і так у списку${where}.`;
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }
     case "unignore_user": {
-      const removed = deps.ignoredUsersStore.remove(action.userId);
       const name = action.userName || String(action.userId);
-      const text = removed ? `Гаразд, ${name} знову чую.` : `${name} я і так не ігнорувала.`;
+      let text: string;
+      if (action.scope === "global") {
+        const removedGlobal = deps.ignoredUsersStore.removeGlobal(action.userId);
+        const removedChat = deps.ignoredUsersStore.removeInChat(action.chatId, action.userId);
+        text =
+          removedGlobal || removedChat
+            ? `Гаразд, ${name} знову чую.`
+            : `${name} я і так не ігнорувала.`;
+      } else if (deps.ignoredUsersStore.isGloballyIgnored(action.userId)) {
+        text = `${name} ігнорує адмін бота, це не мені знімати.`;
+      } else {
+        const removed = deps.ignoredUsersStore.removeInChat(action.chatId, action.userId);
+        text = removed ? `Гаразд, ${name} знову чую.` : `${name} я тут і так не ігнорувала.`;
+      }
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }
     case "list_ignored": {
-      const all = deps.ignoredUsersStore.list();
-      const text =
-        all.length === 0
-          ? "Нікого не ігнорую."
-          : all.map((u) => `${u.userName || "?"} (${u.userId})`).join("\n");
+      const fmt = (u: { userName: string | null; userId: number }) =>
+        `${u.userName || "?"} (${u.userId})`;
+      const inChat = deps.ignoredUsersStore.listInChat(action.chatId).map(fmt);
+      const lines: string[] = [];
+      if (action.scope === "global") {
+        const global = deps.ignoredUsersStore.listGlobal().map(fmt);
+        if (global.length > 0) lines.push("Скрізь:", ...global);
+      }
+      if (inChat.length > 0) lines.push("У цьому чаті:", ...inChat);
+      const text = lines.length === 0 ? "Нікого не ігнорую." : lines.join("\n");
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }
@@ -367,6 +392,17 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       if (deps.profileRefreshInProgress.has(action.chatId)) {
         await ctx.reply("Уже оновлюю, зачекай.", { reply_to_message_id: action.replyTo });
         return;
+      }
+      // Адмін чату — раз на добу: це виклики моделі за рахунок адміна бота.
+      if (!action.byOwner) {
+        const last = deps.profileRefreshByChatAdminAt.get(action.chatId) ?? 0;
+        if (Date.now() - last < CHAT_ADMIN_REFRESH_INTERVAL_MS) {
+          await ctx.reply("Профілі цього чату сьогодні вже оновлювали, наступного разу завтра.", {
+            reply_to_message_id: action.replyTo,
+          });
+          return;
+        }
+        deps.profileRefreshByChatAdminAt.set(action.chatId, Date.now());
       }
       // Десяток викликів моделі — це хвилина. Не тримаємо чергу апдейтів:
       // відповідаємо одразу, а результат досилаємо, коли закінчимо.
@@ -398,7 +434,10 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
           if (r.skipped > 0) parts.push(`Пропустила (просили не профайлити): ${r.skipped}.`);
           if (r.filtered > 0) parts.push(`Відкинула через OPSEC: ${r.filtered}.`);
           if (ids.length > 0) parts.push(`Хендлів знаю: ${handles.withHandle} з ${ids.length}.`);
-          if (r.processed > 0) parts.push(`Коштувало $${r.totalCostUsd.toFixed(3)}.`);
+          // Рахунок — лише адміну бота, це його гроші.
+          if (r.processed > 0 && action.byOwner) {
+            parts.push(`Коштувало $${r.totalCostUsd.toFixed(3)}.`);
+          }
           return api.sendMessage(action.chatId, parts.join(" "), {
             reply_parameters: { message_id: action.replyTo },
           });
