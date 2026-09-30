@@ -58,7 +58,8 @@ export type Action =
   // Явний пошук. query порожній, коли шукати треба за повідомленням чи фото, на яке відповіли.
   | { kind: "invoke_web_search"; replyTo: number; query: string }
   // Адмінський перемикач «влазити в розмову без звернення» для чату.
-  | { kind: "set_chime_in"; replyTo: number; chatId: number; on: boolean }
+  // chance — 0..1; shell клампить до стелі з конфіга.
+  | { kind: "set_chime_in"; replyTo: number; chatId: number; chance: number }
   | { kind: "show_chime_in"; replyTo: number; chatId: number }
   // Адмінський опис усіх групових чатів, де є бот: по одному виклику моделі на чат.
   | { kind: "describe_chats"; replyTo: number }

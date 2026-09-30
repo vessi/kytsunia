@@ -224,8 +224,8 @@ describe("invokeDigest", () => {
         getDigestModel: vi.fn(() => null),
         setDigestModel: vi.fn(),
         clearDigestModel: vi.fn(),
-        getChimeIn: vi.fn(() => false),
-        setChimeIn: vi.fn(),
+        getChimeChance: vi.fn(() => 0),
+        setChimeChance: vi.fn(),
       },
       ...overrides,
     };

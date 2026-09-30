@@ -452,15 +452,21 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
-    // «Кицюня, влазь у розмову» / «Кицюня, не влазь» / «Кицюня, влазиш?».
-    // Admin only, на поточний чат.
+    // «Кицюня, влазь» (дефолтний шанс), «Кицюня, влазь 5%», «Кицюня, не
+    // влазь», «Кицюня, влазиш?». Admin only, на поточний чат. Без відсотка
+    // chance = -1: shell підставить дефолт із конфіга.
     name: "chime_in",
-    pattern: /(К|к)ицюн(я|ю), (не влазь|влазь|влазиш)(?:[!?.\s,]|$)/,
+    pattern:
+      /(К|к)ицюн(я|ю), (не влазь|влазь|влазиш)(?:[\s,:]+(\d+(?:[.,]\d+)?)\s*%?)?(?:[!?.\s,]|$)/,
     produce: (input, match, state) => {
       if (state.policy.adminUserId !== input.senderId) return [];
       const base = { replyTo: input.messageId, chatId: input.chatId };
       if (match[3] === "влазиш") return [{ kind: "show_chime_in", ...base }];
-      return [{ kind: "set_chime_in", ...base, on: match[3] === "влазь" }];
+      if (match[3] === "не влазь") return [{ kind: "set_chime_in", ...base, chance: 0 }];
+      const raw = match[4]?.replace(",", ".");
+      const percent = raw === undefined ? undefined : Number.parseFloat(raw);
+      const chance = percent === undefined || Number.isNaN(percent) ? -1 : percent / 100;
+      return [{ kind: "set_chime_in", ...base, chance }];
     },
   },
   {

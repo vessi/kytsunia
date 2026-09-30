@@ -72,6 +72,15 @@ describe("chatSettingsStore", () => {
     expect(store.getDigestModel(2)).toBeNull();
   });
 
+  it("stores the chime chance, zero by default", () => {
+    expect(store.getChimeChance(1)).toBe(0);
+    store.setChimeChance(1, 0.05, 7);
+    expect(store.getChimeChance(1)).toBe(0.05);
+    store.setChimeChance(1, 0);
+    expect(store.getChimeChance(1)).toBe(0);
+    expect(store.getModel(1)).toBeNull();
+  });
+
   it("clears and reports whether there was an override", () => {
     store.setModel(1, "claude-opus-5");
     expect(store.clearModel(1)).toBe(true);

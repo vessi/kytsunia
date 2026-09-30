@@ -26,6 +26,11 @@ import { formatUsageReport } from "./usage-report.js";
 
 const CHAT_ADMIN_REFRESH_INTERVAL_MS = 24 * 3600_000;
 
+// 0.05 → «5%», 0.015 → «1.5%».
+function pct(chance: number): string {
+  return `${Number((chance * 100).toFixed(2))}%`;
+}
+
 export type ExecuteDeps = {
   insults: string[];
   rng: () => number;
@@ -48,6 +53,8 @@ export type ExecuteDeps = {
   chatsOverview: Omit<ChatsOverviewDeps, "api">;
   // Щоб два «опиши чати» поспіль не ганяли модель двічі.
   chatsOverviewInProgress: { running: boolean };
+  chimeDefaultChance: number;
+  chimeMaxChance: number;
   usersStore: UsersStore;
   profileRefreshOptions: Pick<RefreshOptions, "threshold" | "days" | "limitMessages" | "model">;
   // Чати, де оновлення профілів уже йде: другий запит поспіль не запускаємо.
@@ -393,18 +400,26 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       return;
     }
     case "set_chime_in": {
-      deps.chatSettings.setChimeIn(action.chatId, action.on, ctx.from?.id ?? null);
-      const text = action.on
-        ? "Добре, буду іноді вставляти слово сама. Не частіше, ніж людина з відчуттям міри."
-        : "Гаразд, без звернення мовчу.";
+      const wanted = action.chance < 0 ? deps.chimeDefaultChance : action.chance;
+      const chance = Math.min(wanted, deps.chimeMaxChance);
+      deps.chatSettings.setChimeChance(action.chatId, chance, ctx.from?.id ?? null);
+      let text: string;
+      if (chance <= 0) {
+        text = "Гаразд, без звернення мовчу.";
+      } else {
+        const capped =
+          wanted > chance ? ` Більше за ${pct(deps.chimeMaxChance)} не дозволено.` : "";
+        text = `Добре, влажу з шансом ${pct(chance)} на повідомлення. Не частіше, ніж людина з відчуттям міри.${capped}`;
+      }
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }
     case "show_chime_in": {
-      const on = deps.chatSettings.getChimeIn(action.chatId);
-      await ctx.reply(on ? "Тут влажу." : "Тут мовчу, поки не покличуть.", {
-        reply_to_message_id: action.replyTo,
-      });
+      const chance = deps.chatSettings.getChimeChance(action.chatId);
+      await ctx.reply(
+        chance > 0 ? `Тут влажу з шансом ${pct(chance)}.` : "Тут мовчу, поки не покличуть.",
+        { reply_to_message_id: action.replyTo },
+      );
       return;
     }
     case "describe_chats": {

@@ -151,8 +151,6 @@ export async function invokeChime(ctx: Context, chatId: number, deps: ChimeDeps)
 }
 
 export type ChimePolicy = {
-  // Раз на скільки повідомлень пробувати; крок трохи випадковий, щоб не було ритму.
-  every: number;
   dailyCap: number;
   minGapMs: number;
   // Тихі години за Києвом: [from, to). Якщо from > to — інтервал через північ.
@@ -161,20 +159,17 @@ export type ChimePolicy = {
 };
 
 /**
- * Хто рахує, коли час пробувати. Все в памʼяті процесу: після рестарту
- * лічильники нульові, це прийнятно.
+ * Вирішує, чи час пробувати: шанс на повідомлення (з налаштувань чату), а
+ * далі тихі години, пауза й добова стеля. Лічильники в памʼяті процесу:
+ * після рестарту нульові, це прийнятно.
  */
 export function makeChimeScheduler(
   policy: ChimePolicy,
   rng: () => number = Math.random,
   now: () => number = Date.now,
 ) {
-  const sinceCheck = new Map<number, number>();
-  const nextAt = new Map<number, number>();
   const lastChimeTs = new Map<number, number>();
   const spokenToday = new Map<number, { day: number; n: number }>();
-
-  const jittered = () => Math.max(1, Math.round(policy.every * (0.8 + rng() * 0.4)));
 
   const kyivHour = (ts: number) =>
     Number.parseInt(
@@ -194,17 +189,12 @@ export function makeChimeScheduler(
   };
 
   return {
-    /** Викликати на кожне «звичайне» повідомлення чату. true — час пробувати. */
-    noteMessage: (chatId: number): boolean => {
-      const n = (sinceCheck.get(chatId) ?? 0) + 1;
-      const target = nextAt.get(chatId) ?? jittered();
-      nextAt.set(chatId, target);
-      if (n < target) {
-        sinceCheck.set(chatId, n);
-        return false;
-      }
-      sinceCheck.set(chatId, 0);
-      nextAt.set(chatId, jittered());
+    /**
+     * Викликати на кожне «звичайне» повідомлення чату з шансом цього чату.
+     * true — час пробувати.
+     */
+    noteMessage: (chatId: number, chance: number): boolean => {
+      if (chance <= 0 || rng() >= chance) return false;
       const ts = now();
       if (isQuiet(ts)) return false;
       const last = lastChimeTs.get(chatId) ?? 0;

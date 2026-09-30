@@ -45,7 +45,6 @@ const profileRefreshInProgress = new Set<number>();
 const profileRefreshByChatAdminAt = new Map<number, number>();
 const chatsOverviewInProgress = { running: false };
 const chimeScheduler = makeChimeScheduler({
-  every: config.KYTSUNIA_CHIME_EVERY,
   dailyCap: config.KYTSUNIA_CHIME_DAILY_CAP,
   minGapMs: config.KYTSUNIA_CHIME_MIN_GAP_MIN * 60_000,
   quietFromHour: config.KYTSUNIA_CHIME_QUIET_FROM,
@@ -326,6 +325,8 @@ bot.on("message", async (ctx) => {
           log,
         },
         chatsOverviewInProgress,
+        chimeDefaultChance: config.KYTSUNIA_CHIME_DEFAULT_CHANCE,
+        chimeMaxChance: config.KYTSUNIA_CHIME_MAX_CHANCE,
         digestMaxCount: config.KYTSUNIA_DIGEST_MAX_COUNT,
       });
     } catch (err) {
@@ -341,8 +342,7 @@ bot.on("message", async (ctx) => {
     input.chatId < 0 &&
     input.senderId !== botUserId &&
     !state.ignoredUserIds.has(input.senderId) &&
-    chatSettings.getChimeIn(input.chatId) &&
-    chimeScheduler.noteMessage(input.chatId)
+    chimeScheduler.noteMessage(input.chatId, chatSettings.getChimeChance(input.chatId))
   ) {
     const spoke = await invokeChime(ctx, input.chatId, {
       db,

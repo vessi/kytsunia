@@ -32,68 +32,43 @@ describe("isSilence", () => {
 });
 
 describe("chime scheduler", () => {
-  const policy = {
-    every: 10,
-    dailyCap: 2,
-    minGapMs: 30 * 60_000,
-    quietFromHour: 23,
-    quietToHour: 8,
-  };
+  const policy = { dailyCap: 2, minGapMs: 30 * 60_000, quietFromHour: 23, quietToHour: 8 };
 
-  it("fires once per ~every messages, with jitter within ±20%", () => {
+  it("fires with the chat's chance per message", () => {
+    // rng < chance → спроба. rng 0.04: при 5% так, при 1% ні, при 0 ніколи.
     const s = makeChimeScheduler(
       policy,
-      () => 0.5,
+      () => 0.04,
       () => NOON,
     );
-    const hits: number[] = [];
-    for (let i = 1; i <= 40; i++) if (s.noteMessage(-1)) hits.push(i);
-    expect(hits).toEqual([10, 20, 30, 40]);
-
-    const low = makeChimeScheduler(
+    expect(s.noteMessage(-1, 0.05)).toBe(true);
+    expect(s.noteMessage(-1, 0.01)).toBe(false);
+    expect(s.noteMessage(-1, 0)).toBe(false);
+    const never = makeChimeScheduler(
       policy,
-      () => 0,
+      () => 0.999,
       () => NOON,
     );
-    let first = 0;
-    for (let i = 1; i <= 20 && !first; i++) if (low.noteMessage(-1)) first = i;
-    expect(first).toBe(8);
-  });
-
-  it("keeps chats apart", () => {
-    const s = makeChimeScheduler(
-      policy,
-      () => 0.5,
-      () => NOON,
-    );
-    for (let i = 0; i < 9; i++) s.noteMessage(-1);
-    expect(s.noteMessage(-2)).toBe(false);
-    expect(s.noteMessage(-1)).toBe(true);
+    expect(never.noteMessage(-1, 0.2)).toBe(false);
   });
 
   it("stays silent in quiet hours", () => {
     const s = makeChimeScheduler(
       policy,
-      () => 0.5,
+      () => 0,
       () => NIGHT,
     );
-    let fired = false;
-    for (let i = 0; i < 10; i++) fired = s.noteMessage(-1) || fired;
-    expect(fired).toBe(false);
+    expect(s.noteMessage(-1, 1)).toBe(false);
   });
 
-  it("enforces the gap and the daily cap after speaking", () => {
+  it("enforces the gap and the daily cap after speaking, per chat", () => {
     let now = NOON;
     const s = makeChimeScheduler(
       policy,
-      () => 0.5,
+      () => 0,
       () => now,
     );
-    const fire = () => {
-      let f = false;
-      for (let i = 0; i < 10; i++) f = s.noteMessage(-1) || f;
-      return f;
-    };
+    const fire = () => s.noteMessage(-1, 1);
     expect(fire()).toBe(true);
     s.noteSpoke(-1);
     expect(fire()).toBe(false); // пауза 30 хв
@@ -102,6 +77,7 @@ describe("chime scheduler", () => {
     s.noteSpoke(-1);
     now += 31 * 60_000;
     expect(fire()).toBe(false); // стеля 2 на добу
+    expect(s.noteMessage(-2, 1)).toBe(true); // інший чат не зачеплено
     now += 24 * 3600_000;
     expect(fire()).toBe(true); // нова доба
   });

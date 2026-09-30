@@ -1071,9 +1071,12 @@ describe("fixedRules: chime_in", () => {
     return rule.produce(buildInput({ text, senderId }), m, admin);
   }
 
-  it("turns chiming on, off and shows status", () => {
-    expect(run("Кицюня, влазь у розмову")).toEqual([{ kind: "set_chime_in", ...base, on: true }]);
-    expect(run("Кицюня, не влазь")).toEqual([{ kind: "set_chime_in", ...base, on: false }]);
+  it("turns chiming on with the default or an explicit chance, off, and shows status", () => {
+    expect(run("Кицюня, влазь")).toEqual([{ kind: "set_chime_in", ...base, chance: -1 }]);
+    expect(run("Кицюня, влазь 5%")).toEqual([{ kind: "set_chime_in", ...base, chance: 0.05 }]);
+    expect(run("Кицюня, влазь 2,5 %")).toEqual([{ kind: "set_chime_in", ...base, chance: 0.025 }]);
+    expect(run("Кицюня, влазь: 10")).toEqual([{ kind: "set_chime_in", ...base, chance: 0.1 }]);
+    expect(run("Кицюня, не влазь")).toEqual([{ kind: "set_chime_in", ...base, chance: 0 }]);
     expect(run("Кицюня, влазиш?")).toEqual([{ kind: "show_chime_in", ...base }]);
   });
 

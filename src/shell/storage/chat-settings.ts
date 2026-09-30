@@ -17,18 +17,18 @@ export type ChatSettingsStore = {
   clearDigestMaxCount: (chatId: number) => boolean;
   // Модель дайджесту. null — KYTSUNIA_DIGEST_MODEL; від моделі відповідей не залежить.
   getDigestModel: (chatId: number) => string | null;
-  // Чи влазить сама в розмову в цьому чаті. За замовчуванням ні.
-  getChimeIn: (chatId: number) => boolean;
-  setChimeIn: (chatId: number, on: boolean, updatedByUserId?: number | null) => void;
+  // Шанс влізти в розмову на кожне повідомлення, 0..1. 0 — мовчить (дефолт).
+  getChimeChance: (chatId: number) => number;
+  setChimeChance: (chatId: number, chance: number, updatedByUserId?: number | null) => void;
   setDigestModel: (chatId: number, model: string, updatedByUserId?: number | null) => void;
   clearDigestModel: (chatId: number) => boolean;
 };
 
 export function makeChatSettingsStore(db: Db): ChatSettingsStore {
   const getStmt = db.prepare(
-    "SELECT model, persona, digest_max_count, digest_model, chime_in FROM chat_settings WHERE chat_id = ?",
+    "SELECT model, persona, digest_max_count, digest_model, chime_chance FROM chat_settings WHERE chat_id = ?",
   );
-  type Column = "model" | "persona" | "digest_max_count" | "digest_model" | "chime_in";
+  type Column = "model" | "persona" | "digest_max_count" | "digest_model" | "chime_chance";
   const upsert = (column: Column) =>
     db.prepare(
       `INSERT INTO chat_settings (chat_id, ${column}, updated_at, updated_by_user_id)
@@ -51,7 +51,7 @@ export function makeChatSettingsStore(db: Db): ChatSettingsStore {
   const clearDigestMaxStmt = clear("digest_max_count");
   const setDigestModelStmt = upsert("digest_model");
   const clearDigestModelStmt = clear("digest_model");
-  const setChimeStmt = upsert("chime_in");
+  const setChimeStmt = upsert("chime_chance");
 
   const get = (chatId: number) =>
     getStmt.get(chatId) as
@@ -60,7 +60,7 @@ export function makeChatSettingsStore(db: Db): ChatSettingsStore {
           persona: string | null;
           digest_max_count: number | null;
           digest_model: string | null;
-          chime_in: number | null;
+          chime_chance: number | null;
         }
       | undefined;
 
@@ -84,9 +84,9 @@ export function makeChatSettingsStore(db: Db): ChatSettingsStore {
     clearDigestMaxCount: (chatId) => clearDigestMaxStmt.run(Date.now(), chatId).changes > 0,
 
     getDigestModel: (chatId) => get(chatId)?.digest_model ?? null,
-    getChimeIn: (chatId) => (get(chatId)?.chime_in ?? 0) === 1,
-    setChimeIn: (chatId, on, updatedByUserId = null) => {
-      setChimeStmt.run(chatId, on ? 1 : 0, Date.now(), updatedByUserId);
+    getChimeChance: (chatId) => get(chatId)?.chime_chance ?? 0,
+    setChimeChance: (chatId, chance, updatedByUserId = null) => {
+      setChimeStmt.run(chatId, chance, Date.now(), updatedByUserId);
     },
     setDigestModel: (chatId, model, updatedByUserId = null) => {
       setDigestModelStmt.run(chatId, model, Date.now(), updatedByUserId);
