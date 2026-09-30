@@ -452,6 +452,16 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, опиши всі чати» / «опиши чати, в яких ти сидиш». Admin only:
+    // відповідь містить назви чатів і імена людей, питати краще в особистих.
+    name: "describe_chats",
+    pattern: /(К|к)ицюн(я|ю), опиши (?:всі )?чати/,
+    produce: (input, _match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      return [{ kind: "describe_chats", replyTo: input.messageId }];
+    },
+  },
+  {
     name: "rate_status",
     pattern: /(К|к)ицюн(я|ю), скільки в мене лишилось\??/,
     produce: (input) => [

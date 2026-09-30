@@ -1,6 +1,7 @@
 import { type Context, InputFile } from "grammy";
 import type { Action, MessageInput, MessageKind } from "../core/types.js";
 import { replyInChunks } from "./chunks.js";
+import { type ChatsOverviewDeps, describeChats, renderOverview } from "./llm/chats-overview.js";
 import type { InvokeDigestDeps } from "./llm/digest.js";
 import { invokeDigest } from "./llm/digest.js";
 import type { InvokeLlmDeps } from "./llm/invoke.js";
@@ -44,6 +45,9 @@ export type ExecuteDeps = {
   // Глобальна стеля повідомлень у дайджесті; чат може замінити її будь-якою.
   digestMaxCount: number;
   profileRefresh: ProfileRefreshDeps;
+  chatsOverview: Omit<ChatsOverviewDeps, "api">;
+  // Щоб два «опиши чати» поспіль не ганяли модель двічі.
+  chatsOverviewInProgress: { running: boolean };
   usersStore: UsersStore;
   profileRefreshOptions: Pick<RefreshOptions, "threshold" | "days" | "limitMessages" | "model">;
   // Чати, де оновлення профілів уже йде: другий запит поспіль не запускаємо.
@@ -386,6 +390,31 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       if (inChat.length > 0) lines.push("У цьому чаті:", ...inChat);
       const text = lines.length === 0 ? "Нікого не ігнорую." : lines.join("\n");
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "describe_chats": {
+      if (deps.chatsOverviewInProgress.running) {
+        await ctx.reply("Уже описую, зачекай.", { reply_to_message_id: action.replyTo });
+        return;
+      }
+      deps.chatsOverviewInProgress.running = true;
+      await ctx.reply("Дивлюся по чатах, це хвилина-дві.", { reply_to_message_id: action.replyTo });
+      const chatId = ctx.chat?.id ?? 0;
+      void describeChats(
+        { ...deps.chatsOverview, api: ctx.api },
+        { chatId, userId: ctx.from?.id ?? 0, userName: ctx.from?.first_name ?? "" },
+      )
+        .then((items) => replyInChunks(ctx, renderOverview(items), action.replyTo))
+        .catch((err) => {
+          deps.chatsOverview.log.error(
+            { err: err instanceof Error ? err.message : err },
+            "chats overview failed",
+          );
+          return ctx.api.sendMessage(chatId, "Опис чатів зламався, глянь логи.");
+        })
+        .finally(() => {
+          deps.chatsOverviewInProgress.running = false;
+        });
       return;
     }
     case "refresh_profiles": {

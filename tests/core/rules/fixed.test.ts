@@ -1037,3 +1037,25 @@ describe("fixedRules: ignore_user / unignore_user / list_ignored", () => {
     expect(findRule("ignore_user").pattern.test("Кицюня, не ігноруй")).toBe(false);
   });
 });
+
+describe("fixedRules: describe_chats", () => {
+  const rule = findRule("describe_chats");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+
+  it("matches both phrasings for the admin", () => {
+    for (const text of ["Кицюня, опиши всі чати, в яких ти сидиш", "Кицюня, опиши чати"]) {
+      const m = rule.pattern.exec(text);
+      if (!m) throw new Error("no match");
+      expect(rule.produce(buildInput({ text }), m, admin)).toEqual([
+        { kind: "describe_chats", replyTo: 100 },
+      ]);
+    }
+  });
+
+  it("is silently ignored for non-admins", () => {
+    const input = buildInput({ text: "Кицюня, опиши всі чати", senderId: 301 });
+    const m = rule.pattern.exec(input.text);
+    if (!m) throw new Error("no match");
+    expect(rule.produce(input, m, admin)).toEqual([]);
+  });
+});

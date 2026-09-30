@@ -42,6 +42,7 @@ const ignoredUsersStore = makeIgnoredUsersStore(db);
 const chatSettings = makeChatSettingsStore(db);
 const profileRefreshInProgress = new Set<number>();
 const profileRefreshByChatAdminAt = new Map<number, number>();
+const chatsOverviewInProgress = { running: false };
 log.info({ dbPath: config.DB_PATH }, "database opened");
 log.info({ count: regularsStore.list().length }, "regulars loaded");
 log.info({ count: optOutsStore.list().length }, "profile opt-outs loaded");
@@ -308,6 +309,15 @@ bot.on("message", async (ctx) => {
         profileRefreshInProgress,
         profileRefreshByChatAdminAt,
         usersStore,
+        chatsOverview: {
+          db,
+          llmClient,
+          llmCallStore,
+          model: config.KYTSUNIA_DIGEST_MODEL,
+          botUserId,
+          log,
+        },
+        chatsOverviewInProgress,
         digestMaxCount: config.KYTSUNIA_DIGEST_MAX_COUNT,
       });
     } catch (err) {
