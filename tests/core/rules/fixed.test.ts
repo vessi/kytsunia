@@ -1059,3 +1059,25 @@ describe("fixedRules: describe_chats", () => {
     expect(rule.produce(input, m, admin)).toEqual([]);
   });
 });
+
+describe("fixedRules: chime_in", () => {
+  const rule = findRule("chime_in");
+  const admin = buildState({ policy: { adminUserId: 300 } });
+  const base = { replyTo: 100, chatId: 200 };
+
+  function run(text: string, senderId = 300) {
+    const m = rule.pattern.exec(text);
+    if (!m) throw new Error(`no match: ${text}`);
+    return rule.produce(buildInput({ text, senderId }), m, admin);
+  }
+
+  it("turns chiming on, off and shows status", () => {
+    expect(run("Кицюня, влазь у розмову")).toEqual([{ kind: "set_chime_in", ...base, on: true }]);
+    expect(run("Кицюня, не влазь")).toEqual([{ kind: "set_chime_in", ...base, on: false }]);
+    expect(run("Кицюня, влазиш?")).toEqual([{ kind: "show_chime_in", ...base }]);
+  });
+
+  it("is silently ignored for non-admins", () => {
+    expect(run("Кицюня, влазь", 301)).toEqual([]);
+  });
+});

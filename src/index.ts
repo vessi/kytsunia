@@ -5,6 +5,7 @@ import type { State } from "./core/types.js";
 import { makeChatAdminsCache } from "./shell/chat-admins.js";
 import { loadInsults } from "./shell/insults.js";
 import { makeLlmClient } from "./shell/llm/anthropic.js";
+import { invokeChime, makeChimeScheduler } from "./shell/llm/chime.js";
 import { makePhotoDescriber } from "./shell/llm/describe-photo.js";
 import type { InvokeDigestDeps } from "./shell/llm/digest.js";
 import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
@@ -43,6 +44,13 @@ const chatSettings = makeChatSettingsStore(db);
 const profileRefreshInProgress = new Set<number>();
 const profileRefreshByChatAdminAt = new Map<number, number>();
 const chatsOverviewInProgress = { running: false };
+const chimeScheduler = makeChimeScheduler({
+  every: config.KYTSUNIA_CHIME_EVERY,
+  dailyCap: config.KYTSUNIA_CHIME_DAILY_CAP,
+  minGapMs: config.KYTSUNIA_CHIME_MIN_GAP_MIN * 60_000,
+  quietFromHour: config.KYTSUNIA_CHIME_QUIET_FROM,
+  quietToHour: config.KYTSUNIA_CHIME_QUIET_TO,
+});
 log.info({ dbPath: config.DB_PATH }, "database opened");
 log.info({ count: regularsStore.list().length }, "regulars loaded");
 log.info({ count: optOutsStore.list().length }, "profile opt-outs loaded");
@@ -323,6 +331,41 @@ bot.on("message", async (ctx) => {
     } catch (err) {
       log.error({ err: err instanceof Error ? err.message : err }, "action execution failed");
     }
+    return;
+  }
+
+  // Повідомлення не до Кицюні. У чатах, де їй дозволено влазити, рахуємо його
+  // й час від часу даємо моделі шанс сказати слово. Ігнорованих і самого бота
+  // не рахуємо, у приватах нема куди влазити.
+  if (
+    input.chatId < 0 &&
+    input.senderId !== botUserId &&
+    !state.ignoredUserIds.has(input.senderId) &&
+    chatSettings.getChimeIn(input.chatId) &&
+    chimeScheduler.noteMessage(input.chatId)
+  ) {
+    const spoke = await invokeChime(ctx, input.chatId, {
+      db,
+      llmClient,
+      llmCallStore,
+      chatSettings,
+      regularsStore,
+      instructionStore,
+      model: config.LLM_MODEL,
+      digestModel: config.KYTSUNIA_DIGEST_MODEL,
+      persona: personaFor,
+      cacheTtl: config.KYTSUNIA_CACHE_TTL,
+      botUserId,
+      botName,
+      replyMaxTokens: config.KYTSUNIA_REPLY_MAX_TOKENS,
+      globalDailyCap: config.GLOBAL_DAILY_LLM_CAP,
+      contextSize: config.KYTSUNIA_CHIME_CONTEXT,
+      appendMessage,
+      photoDescriptions: photoDescriptionStore,
+      now: () => Date.now(),
+      log,
+    });
+    if (spoke) chimeScheduler.noteSpoke(input.chatId);
   }
 });
 

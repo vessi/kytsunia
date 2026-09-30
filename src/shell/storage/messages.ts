@@ -53,6 +53,8 @@ export function makeMessageEditor(db: Db): MessageEditor {
 }
 
 export type RecentMessageRow = {
+  // msg_id лідера логічного повідомлення: на нього можна відповісти.
+  msgId: number;
   ts: number;
   senderId: number;
   senderName: string;
@@ -184,6 +186,7 @@ export function getRecentMessages(
 
     return {
       ts: head.ts,
+      msgId: head.msg_id,
       senderId: head.sender_id,
       senderName: head.sender_name,
       text: head.text ?? "",

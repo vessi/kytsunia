@@ -68,6 +68,16 @@ const envSchema = z.object({
   KYTSUNIA_PROFILE_DAYS: envValue(z.coerce.number().int().positive().default(30)),
   // Скільки останніх повідомлень людини йде в модель.
   KYTSUNIA_PROFILE_LIMIT_MESSAGES: envValue(z.coerce.number().int().positive().default(200)),
+  // Влазити в розмову без звернення (на чат, вмикає адмін). Пробувати раз на
+  // KYTSUNIA_CHIME_EVERY повідомлень (±20%), не частіше за MIN_GAP, не більше
+  // DAILY_CAP реплік на добу, і не в тихі години за Києвом [FROM, TO).
+  KYTSUNIA_CHIME_EVERY: envValue(z.coerce.number().int().positive().default(100)),
+  KYTSUNIA_CHIME_DAILY_CAP: envValue(z.coerce.number().int().positive().default(5)),
+  KYTSUNIA_CHIME_MIN_GAP_MIN: envValue(z.coerce.number().int().nonnegative().default(30)),
+  KYTSUNIA_CHIME_QUIET_FROM: envValue(z.coerce.number().int().min(0).max(23).default(23)),
+  KYTSUNIA_CHIME_QUIET_TO: envValue(z.coerce.number().int().min(0).max(23).default(8)),
+  // Скільки останніх повідомлень модель бачить, вирішуючи, чи влазити.
+  KYTSUNIA_CHIME_CONTEXT: envValue(z.coerce.number().int().positive().default(100)),
   // Життя prompt-кешу: 5m або 1h. Година дорожча в записі (2x проти 1.25x), але
   // звернення після паузи в 5–60 хв читають кеш замість писати заново.
   KYTSUNIA_CACHE_TTL: envValue(z.enum(["5m", "1h"]).default("1h")),

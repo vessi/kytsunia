@@ -452,6 +452,18 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, влазь у розмову» / «Кицюня, не влазь» / «Кицюня, влазиш?».
+    // Admin only, на поточний чат.
+    name: "chime_in",
+    pattern: /(К|к)ицюн(я|ю), (не влазь|влазь|влазиш)(?:[!?.\s,]|$)/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const base = { replyTo: input.messageId, chatId: input.chatId };
+      if (match[3] === "влазиш") return [{ kind: "show_chime_in", ...base }];
+      return [{ kind: "set_chime_in", ...base, on: match[3] === "влазь" }];
+    },
+  },
+  {
     // «Кицюня, опиши всі чати» / «опиши чати, в яких ти сидиш». Admin only:
     // відповідь містить назви чатів і імена людей, питати краще в особистих.
     name: "describe_chats",

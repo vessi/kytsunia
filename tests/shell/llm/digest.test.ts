@@ -57,6 +57,7 @@ function makeCtx(): { ctx: Context; reply: ReturnType<typeof vi.fn> } {
 
 function row(overrides: Partial<RecentMessageRow> = {}): RecentMessageRow {
   return {
+    msgId: 1,
     ts: Date.UTC(2026, 8, 9, 9, 30),
     senderId: 7,
     senderName: "Andriy",
@@ -223,6 +224,8 @@ describe("invokeDigest", () => {
         getDigestModel: vi.fn(() => null),
         setDigestModel: vi.fn(),
         clearDigestModel: vi.fn(),
+        getChimeIn: vi.fn(() => false),
+        setChimeIn: vi.fn(),
       },
       ...overrides,
     };

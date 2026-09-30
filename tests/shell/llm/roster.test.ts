@@ -100,6 +100,8 @@ function makeDeps(
       getDigestModel: vi.fn(() => null),
       setDigestModel: vi.fn(),
       clearDigestModel: vi.fn(),
+      getChimeIn: vi.fn(() => false),
+      setChimeIn: vi.fn(),
     },
     model: "claude-sonnet-5",
     digestModel: "claude-sonnet-5",

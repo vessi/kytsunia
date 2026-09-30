@@ -392,6 +392,21 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
       return;
     }
+    case "set_chime_in": {
+      deps.chatSettings.setChimeIn(action.chatId, action.on, ctx.from?.id ?? null);
+      const text = action.on
+        ? "Добре, буду іноді вставляти слово сама. Не частіше, ніж людина з відчуттям міри."
+        : "Гаразд, без звернення мовчу.";
+      await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "show_chime_in": {
+      const on = deps.chatSettings.getChimeIn(action.chatId);
+      await ctx.reply(on ? "Тут влажу." : "Тут мовчу, поки не покличуть.", {
+        reply_to_message_id: action.replyTo,
+      });
+      return;
+    }
     case "describe_chats": {
       if (deps.chatsOverviewInProgress.running) {
         await ctx.reply("Уже описую, зачекай.", { reply_to_message_id: action.replyTo });

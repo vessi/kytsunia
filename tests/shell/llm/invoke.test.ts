@@ -107,6 +107,8 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
       getDigestModel: vi.fn(() => null),
       setDigestModel: vi.fn(),
       clearDigestModel: vi.fn(),
+      getChimeIn: vi.fn(() => false),
+      setChimeIn: vi.fn(),
     },
     persona: () => "P",
     defaultDailyLimit: 100,
@@ -1406,6 +1408,8 @@ describe("invokeLlmReply: per-chat model", () => {
         getDigestModel: vi.fn(() => null),
         setDigestModel: vi.fn(),
         clearDigestModel: vi.fn(),
+        getChimeIn: vi.fn(() => false),
+        setChimeIn: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, d);
@@ -1444,6 +1448,8 @@ describe("invokeLlmReply: per-chat model", () => {
         getDigestModel: vi.fn(() => null),
         setDigestModel: vi.fn(),
         clearDigestModel: vi.fn(),
+        getChimeIn: vi.fn(() => false),
+        setChimeIn: vi.fn(),
       },
     });
     await invokeLlmReply(ctx, 999, d);
