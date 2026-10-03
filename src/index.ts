@@ -15,6 +15,7 @@ import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
 import { makeChatSettingsStore } from "./shell/storage/chat-settings.js";
 import { openDb } from "./shell/storage/db.js";
+import { makeDigestStore } from "./shell/storage/digests.js";
 import { makeIgnoredUsersStore } from "./shell/storage/ignored.js";
 import { makeInstructionStore } from "./shell/storage/instructions.js";
 import { makeLlmCallStore } from "./shell/storage/llm-calls.js";
@@ -41,6 +42,7 @@ const optOutsStore = makeOptOutsStore(db);
 const instructionStore = makeInstructionStore(db);
 const ignoredUsersStore = makeIgnoredUsersStore(db);
 const chatSettings = makeChatSettingsStore(db);
+const digestStore = makeDigestStore(db);
 const profileRefreshInProgress = new Set<number>();
 const profileRefreshByChatAdminAt = new Map<number, number>();
 const chatsOverviewInProgress = { running: false };
@@ -179,6 +181,10 @@ const invokeDigestDeps: InvokeDigestDeps = {
   regularsStore,
   botUserId,
   photoDescriptions: photoDescriptionStore,
+  digestStore,
+  reuseWindowMs: config.KYTSUNIA_DIGEST_REUSE_HOURS * 3600_000,
+  minNewMessages: config.KYTSUNIA_DIGEST_MIN_NEW,
+  now: () => Date.now(),
 };
 
 const invokeRosterDeps: InvokeRosterDeps = {

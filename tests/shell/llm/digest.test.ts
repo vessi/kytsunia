@@ -15,6 +15,7 @@ import {
   resolveCount,
 } from "../../../src/shell/llm/digest.js";
 import type { Db } from "../../../src/shell/storage/db.js";
+import { makeDigestStore } from "../../../src/shell/storage/digests.js";
 import { makeMessageAppender, type RecentMessageRow } from "../../../src/shell/storage/messages.js";
 import { openTestDb } from "../../helpers/db.js";
 
@@ -166,13 +167,16 @@ describe("buildDigestRequest", () => {
 describe("invokeDigest", () => {
   let db: Db;
 
-  function seed(count: number): void {
+  // Час «зараз» у тестах: після всіх seed-повідомлень.
+  const NOW = Date.UTC(2026, 8, 9, 12, 0);
+
+  function seed(count: number, startId = 1): void {
     const append = makeMessageAppender(db);
     for (let i = 0; i < count; i++) {
       append({
         chatId: 1,
-        messageId: i + 1,
-        ts: Date.UTC(2026, 8, 9, 9, i),
+        messageId: startId + i,
+        ts: Date.UTC(2026, 8, 9, 9, 0) + (startId + i) * 1000,
         senderId: 7,
         senderName: "Andriy",
         text: `повідомлення ${i}`,
@@ -211,6 +215,10 @@ describe("invokeDigest", () => {
         removeAllForUser: vi.fn(),
         setManualNotes: vi.fn(),
       },
+      digestStore: makeDigestStore(db),
+      reuseWindowMs: 2 * 3600_000,
+      minNewMessages: 20,
+      now: () => NOW,
       chatSettings: {
         getModel: vi.fn(() => null),
         setModel: vi.fn(),
@@ -345,6 +353,142 @@ describe("invokeDigest", () => {
     (deps.chatSettings.getDigestMaxCount as ReturnType<typeof vi.fn>).mockReturnValue(1000);
     await invokeDigest(ctx, 999, 25, deps);
     expect(llm.calls[0]?.content).toContain("останні 25 повідомлень");
+  });
+
+  describe("reuse of a recent digest", () => {
+    const window = (n: number) => `${"• перше\n".repeat(1)}дайджест за ${n}`;
+
+    it("records the window of every digest it makes", async () => {
+      const { ctx } = makeCtx();
+      seed(30);
+      const deps = makeDeps({ llmClient: makeFakeLlm(window(30)).client, defaultCount: 30 });
+      await invokeDigest(ctx, 999, undefined, deps);
+      const prev = deps.digestStore.latestOverlapping(1, 1, 30, 0);
+      expect(prev).toMatchObject({
+        chatId: 1,
+        messageId: 12345,
+        fromMsgId: 1,
+        toMsgId: 30,
+        count: 30,
+      });
+      expect(prev?.text).toContain("дайджест за 30");
+    });
+
+    it("links to a fresh digest instead of calling the model when little is new", async () => {
+      const { ctx, reply } = makeCtx();
+      seed(30);
+      const llm = makeFakeLlm(window(30));
+      const deps = makeDeps({ llmClient: llm.client, defaultCount: 30 });
+      deps.digestStore.record({
+        chatId: 1,
+        ts: NOW - 60_000,
+        messageId: 500,
+        fromMsgId: 1,
+        toMsgId: 30,
+        count: 30,
+        text: "старий",
+      });
+
+      // Вікно всередині попереднього: «дайджест 10» після дайджесту на 30.
+      await invokeDigest(ctx, 999, 10, deps);
+      expect(llm.calls).toHaveLength(0);
+      expect(deps.llmCallStore.record).not.toHaveBeenCalled();
+      expect(reply.mock.calls[0]?.[0]).toContain("Робила о");
+      expect(reply.mock.calls[0]?.[1]).toMatchObject({ reply_parameters: { message_id: 500 } });
+    });
+
+    it("gives a t.me link in supergroups", async () => {
+      const { ctx, reply } = makeCtx();
+      (ctx.chat as { id: number }).id = -1001407977544;
+      (ctx.message as { chat: { id: number } }).chat.id = -1001407977544;
+      const append = makeMessageAppender(db);
+      for (let i = 1; i <= 10; i++) {
+        append({
+          chatId: -1001407977544,
+          messageId: i,
+          ts: NOW - 100_000 + i,
+          senderId: 7,
+          senderName: "A",
+          text: `m${i}`,
+          kind: "text",
+        });
+      }
+      const deps = makeDeps({ llmClient: makeFakeLlm("x").client, defaultCount: 10 });
+      deps.digestStore.record({
+        chatId: -1001407977544,
+        ts: NOW - 60_000,
+        messageId: 500,
+        fromMsgId: 1,
+        toMsgId: 10,
+        count: 10,
+        text: "старий",
+      });
+      await invokeDigest(ctx, 999, undefined, deps);
+      expect(reply.mock.calls[0]?.[0]).toContain("https://t.me/c/1407977544/500");
+    });
+
+    it("continues from the previous digest when enough is uncovered, linking back", async () => {
+      const { ctx, reply } = makeCtx();
+      (ctx.chat as { id: number }).id = -1001407977544;
+      (ctx.message as { chat: { id: number } }).chat.id = -1001407977544;
+      const append = makeMessageAppender(db);
+      for (let i = 1; i <= 60; i++) {
+        append({
+          chatId: -1001407977544,
+          messageId: i,
+          ts: NOW - 100_000 + i,
+          senderId: 7,
+          senderName: "A",
+          text: `m${i}`,
+          kind: "text",
+        });
+      }
+      const llm = makeFakeLlm("продовження");
+      const deps = makeDeps({ llmClient: llm.client, defaultCount: 60 });
+      // Попередній покрив 11..40: непокриті 1..10 (старіші) і 41..60 (новіші) = 30 ≥ 20.
+      deps.digestStore.record({
+        chatId: -1001407977544,
+        ts: NOW - 60_000,
+        messageId: 500,
+        fromMsgId: 11,
+        toMsgId: 40,
+        count: 30,
+        text: "СТАРИЙ ТЕКСТ",
+      });
+      await invokeDigest(ctx, 999, undefined, deps);
+
+      expect(llm.calls).toHaveLength(1);
+      const content = String(llm.calls[0]?.content);
+      expect(content).toContain("СТАРИЙ ТЕКСТ");
+      expect(content).toContain("до попереднього дайджесту (10)");
+      expect(content).toContain("після попереднього дайджесту (20)");
+      expect(content).toContain("A: m60");
+      expect(content).not.toContain("A: m25");
+      expect(reply.mock.calls[0]?.[0]).toContain(
+        "Попередній дайджест: https://t.me/c/1407977544/500",
+      );
+      const latest = deps.digestStore.latestOverlapping(-1001407977544, 1, 60, 0);
+      expect(latest).toMatchObject({ fromMsgId: 1, toMsgId: 60, count: 60, text: "продовження" });
+    });
+
+    it("ignores digests older than the reuse window", async () => {
+      const { ctx } = makeCtx();
+      seed(30);
+      const llm = makeFakeLlm(window(30));
+      const deps = makeDeps({ llmClient: llm.client, defaultCount: 30 });
+      deps.digestStore.record({
+        chatId: 1,
+        ts: NOW - 3 * 3600_000,
+        messageId: 500,
+        fromMsgId: 1,
+        toMsgId: 30,
+        count: 30,
+        text: "старий",
+      });
+      await invokeDigest(ctx, 999, undefined, deps);
+      expect(llm.calls).toHaveLength(1);
+      expect(String(llm.calls[0]?.content)).not.toContain("старий");
+    });
   });
 
   it("refuses when the feature flag is off", async () => {

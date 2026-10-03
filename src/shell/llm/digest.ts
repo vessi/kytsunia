@@ -3,10 +3,12 @@ import { replyInChunks } from "../chunks.js";
 import type { Logger } from "../logger.js";
 import type { ChatSettingsStore } from "../storage/chat-settings.js";
 import type { Db } from "../storage/db.js";
+import type { DigestRecord, DigestStore } from "../storage/digests.js";
 import type { InstructionStore } from "../storage/instructions.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
 import { getRecentMessages, type RecentMessageRow } from "../storage/messages.js";
 import type { RegularsStore } from "../storage/regulars.js";
+import { messageLink } from "../tg-links.js";
 import { formatKyivDate, formatKyivTime } from "../time.js";
 import type { TypingStarter } from "../typing.js";
 import type { LlmClient, SystemBlock } from "./anthropic.js";
@@ -48,6 +50,19 @@ export type InvokeDigestDeps = {
   botUserId?: number;
   // Кешовані описи фото для транскрипту; нових не генерує.
   photoDescriptions?: { get: (uniqueId: string) => string | null };
+  // Повторні дайджести: посилання замість повтору, продовження замість переказу.
+  digestStore: DigestStore;
+  reuseWindowMs: number;
+  minNewMessages: number;
+  now: () => number;
+};
+
+// Попередній дайджест, вікно якого перетинається з новим: текст замість його
+// повідомлень, а транскриптом — лише те, чого він не покрив.
+export type PreviousDigest = {
+  text: string;
+  older: readonly RecentMessageRow[];
+  newer: readonly RecentMessageRow[];
 };
 
 /**
@@ -106,6 +121,7 @@ export function buildDigestRequest(
   prompt: string,
   profiles: readonly ProfileEntry[] = [],
   describe?: (uniqueId: string) => string | null,
+  previous?: PreviousDigest,
 ): { system: SystemBlock[]; userMessage: string } {
   // Без cache_control: дайджести рідкі, тож запис кешу під окремим префіксом
   // (промпт дайджесту + профілі) майже ніколи не читається, а коштує 1.25x.
@@ -114,6 +130,25 @@ export function buildDigestRequest(
   const profilesBlock = renderProfilesBlock(profiles);
   if (profilesBlock) {
     system.push({ type: "text", text: profilesBlock });
+  }
+  if (previous) {
+    const parts = [
+      `Дайджест за вікно з ${rows.length} повідомлень. Середину вікна вже покриває попередній дайджест — ось він, замість тих повідомлень:\n\n${previous.text}`,
+    ];
+    if (previous.older.length > 0) {
+      parts.push(
+        `Повідомлення до попереднього дайджесту (${previous.older.length}):\n\n${renderTranscript(previous.older, describe)}`,
+      );
+    }
+    if (previous.newer.length > 0) {
+      parts.push(
+        `Повідомлення після попереднього дайджесту (${previous.newer.length}):\n\n${renderTranscript(previous.newer, describe)}`,
+      );
+    }
+    parts.push(
+      "Зроби дайджест за все вікно: для покритої частини спирайся на попередній дайджест і не переказуй його дослівно, а решту додай як є. Якщо нове лише після попереднього — починай з нього.",
+    );
+    return { system, userMessage: parts.join("\n\n") };
   }
   const userMessage = `Ось останні ${rows.length} повідомлень чату:\n\n${renderTranscript(
     rows,
@@ -155,7 +190,53 @@ export async function invokeDigest(
     weight: deps.weight,
   };
 
-  // 1. Ліміти. Дайджест важить weight слотів, тому перевіряємо не «чи лишився
+  // 1. Історія. Тригерне повідомлення виключаємо — воно і є «зроби дайджест».
+  const rows = getRecentMessages(deps.db, chatId, count, replyTo);
+  if (rows.length < MIN_MESSAGES) {
+    deps.log.debug({ chatId, found: rows.length }, "digest: not enough messages");
+    await ctx.reply("Нема з чого робити дайджест, у вас тут тиша.", {
+      reply_to_message_id: replyTo,
+    });
+    return;
+  }
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  if (!first || !last) return;
+
+  // 2. Свіжий дайджест із вікном, що перетинається. Непокритих мало —
+  //    посилання на нього, без моделі й без слота в лімітах. Інакше модель
+  //    отримає його текст і лише непокриті повідомлення.
+  const prev = deps.digestStore.latestOverlapping(
+    chatId,
+    first.msgId,
+    last.msgId,
+    deps.now() - deps.reuseWindowMs,
+  );
+  let previous: PreviousDigest | undefined;
+  let prevLink: string | null = null;
+  if (prev) {
+    const older = rows.filter((r) => r.msgId < prev.fromMsgId);
+    const newer = rows.filter((r) => r.msgId > prev.toMsgId);
+    prevLink = messageLink(chatId, prev.messageId);
+    if (older.length + newer.length < deps.minNewMessages) {
+      deps.log.info(
+        { chatId, userId, prevTs: prev.ts, uncovered: older.length + newer.length },
+        "digest: reusing previous",
+      );
+      const when = formatKyivTime(prev.ts);
+      await ctx.reply(
+        prevLink ? `Робила о ${when}, ось: ${prevLink}` : `Робила о ${when}, дивись вище.`,
+        {
+          reply_parameters: { message_id: prev.messageId },
+          ...(prevLink ? { link_preview_options: { is_disabled: true } } : {}),
+        },
+      );
+      return;
+    }
+    previous = { text: prev.text, older, newer };
+  }
+
+  // 3. Ліміти. Дайджест важить weight слотів, тому перевіряємо не «чи лишився
   //    хоч один», а «чи лишилось weight» — інакше останній слот дня пішов би
   //    на виклик, що коштує як десяток.
   const globalStatus = deps.llmCallStore.checkGlobalRate(deps.globalDailyCap);
@@ -175,16 +256,6 @@ export async function invokeDigest(
     return;
   }
 
-  // 2. Історія. Тригерне повідомлення виключаємо — воно і є «зроби дайджест».
-  const rows = getRecentMessages(deps.db, chatId, count, replyTo);
-  if (rows.length < MIN_MESSAGES) {
-    deps.log.debug({ chatId, found: rows.length }, "digest: not enough messages");
-    await ctx.reply("Нема з чого робити дайджест, у вас тут тиша.", {
-      reply_to_message_id: replyTo,
-    });
-    return;
-  }
-
   const prompt = withSpecialInstructions(
     deps.prompt,
     deps.instructionStore.list(chatId).map((i) => i.text),
@@ -195,6 +266,7 @@ export async function invokeDigest(
     prompt,
     profiles,
     deps.photoDescriptions ? (id) => deps.photoDescriptions?.get(id) ?? null : undefined,
+    previous,
   );
   const stopTyping = deps.startTyping(ctx);
 
@@ -239,8 +311,28 @@ export async function invokeDigest(
 
     // Дайджест НЕ зберігаємо в messages, на відміну від звичайних відповідей:
     // це кілька тисяч символів, які б витіснили половину recent-контексту
-    // наступних реплаїв (і потрапили б у наступний же дайджест).
-    await replyInChunks(ctx, text, replyTo);
+    // наступних реплаїв (і потрапили б у наступний же дайджест). Зате
+    // пишемо в digests — для посилань і продовжень.
+    const outgoing = previous && prevLink ? `${text}\n\nПопередній дайджест: ${prevLink}` : text;
+    const sent = await replyInChunks(
+      ctx,
+      outgoing,
+      replyTo,
+      prevLink ? { link_preview_options: { is_disabled: true } } : {},
+    );
+    const firstSent = sent[0];
+    if (firstSent) {
+      const record: DigestRecord = {
+        chatId,
+        ts: deps.now(),
+        messageId: firstSent.message_id,
+        fromMsgId: first.msgId,
+        toMsgId: last.msgId,
+        count: rows.length,
+        text,
+      };
+      deps.digestStore.record(record);
+    }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     deps.llmCallStore.record({ ...baseRecord, status: "error", errorMessage });

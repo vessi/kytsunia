@@ -61,6 +61,12 @@ const envSchema = z.object({
   KYTSUNIA_DIGEST_MODEL: envValue(z.string().default("claude-sonnet-5")),
   // Скільки слотів добового ліміту зʼїдає один дайджест.
   KYTSUNIA_DIGEST_WEIGHT: envValue(z.coerce.number().int().positive().default(3)),
+  // Повторні дайджести: якщо є дайджест не старший за REUSE_HOURS, вікно якого
+  // перетинається з новим, і непокритих ним повідомлень менше за MIN_NEW —
+  // даємо посилання на нього замість нового виклику. Інакше добудовуємо лише
+  // непокрите, з текстом попереднього в контексті.
+  KYTSUNIA_DIGEST_REUSE_HOURS: envValue(z.coerce.number().nonnegative().default(2)),
+  KYTSUNIA_DIGEST_MIN_NEW: envValue(z.coerce.number().int().nonnegative().default(20)),
   // Профілі постійних учасників: скрипт refresh-regulars і «Кицюня, онови профілі».
   KYTSUNIA_PROFILE_MODEL: envValue(z.string().default("claude-sonnet-5")),
   // Мінімум повідомлень за період, щоб отримати профіль.
