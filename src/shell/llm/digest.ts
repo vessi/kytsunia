@@ -99,18 +99,26 @@ export function renderTranscript(
 ): string {
   const lines: string[] = [];
   let currentDay: string | null = null;
+  // Час ставимо лише коли змінилась година: на сотнях рядків «[HH:MM]» на
+  // кожному — це 10% транскрипту, а дайджесту вистачає й грубої сітки.
+  let currentHour: string | null = null;
 
   for (const row of rows) {
     const day = formatKyivDate(row.ts);
     if (day !== currentDay) {
       lines.push(`--- ${day} ---`);
       currentDay = day;
+      currentHour = null;
     }
     const notes = row.photos
       .map((p) => describe(p.uniqueId))
       .filter((d): d is string => d !== null);
     const marker = photoMarker(row.photos.length, notes);
-    lines.push(`[${formatKyivTime(row.ts)}] ${row.senderName}: ${marker}${row.text}`.trimEnd());
+    const time = formatKyivTime(row.ts);
+    const hour = time.slice(0, 2);
+    const stamp = hour === currentHour ? "" : `[${time}] `;
+    currentHour = hour;
+    lines.push(`${stamp}${row.senderName}: ${marker}${row.text}`.trimEnd());
   }
 
   return lines.join("\n");

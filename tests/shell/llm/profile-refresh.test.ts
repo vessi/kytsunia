@@ -123,6 +123,7 @@ describe("profile refresh", () => {
       failed: 0,
       skipped: 0,
       filtered: 0,
+      unchanged: 0,
       totalCostUsd: expect.any(Number),
     });
     expect(result.totalCostUsd).toBeGreaterThan(0);
@@ -160,6 +161,29 @@ describe("profile refresh", () => {
     expect(llm.calls).toHaveLength(1);
     expect(d.regularsStore.get(9999, 1)).toBeNull();
     expect(d.regularsStore.get(10, 1)).not.toBeNull();
+  });
+
+  it("skips users with too little new since their profile, unless forced", async () => {
+    seed(1, 10, "Andriy", 6);
+    seed(1, 11, "Olha", 6);
+    const llm = fakeLlm();
+    const d = deps(llm.client);
+    // Профіль Andriy зроблено після всіх його повідомлень — нового нуль.
+    d.regularsStore.upsert({
+      userId: 10,
+      chatId: 1,
+      displayName: "Andriy",
+      profile: "старий",
+      messageCount: 6,
+      lastMessageTs: 0,
+    });
+    const result = await refreshProfiles(d, { ...opts, chatId: 1, minNewMessages: 3 });
+    expect(result).toMatchObject({ processed: 1, unchanged: 1 });
+    expect(llm.calls).toHaveLength(1);
+    expect(d.regularsStore.get(10, 1)?.profile).toBe("старий");
+
+    const forced = await refreshProfiles(d, { ...opts, chatId: 1, minNewMessages: 3, force: true });
+    expect(forced).toMatchObject({ processed: 2, unchanged: 0 });
   });
 
   it("skips opted-out users and counts them", async () => {
@@ -251,7 +275,14 @@ describe("profile refresh", () => {
     seed(1, 10, "Andriy", 2);
     const llm = fakeLlm();
     const result = await refreshProfiles(deps(llm.client), { ...opts, chatId: 1 });
-    expect(result).toEqual({ processed: 0, failed: 0, skipped: 0, filtered: 0, totalCostUsd: 0 });
+    expect(result).toEqual({
+      processed: 0,
+      failed: 0,
+      skipped: 0,
+      filtered: 0,
+      unchanged: 0,
+      totalCostUsd: 0,
+    });
     expect(llm.calls).toHaveLength(0);
   });
 });

@@ -56,7 +56,10 @@ export type ExecuteDeps = {
   chimeDefaultChance: number;
   chimeMaxChance: number;
   usersStore: UsersStore;
-  profileRefreshOptions: Pick<RefreshOptions, "threshold" | "days" | "limitMessages" | "model">;
+  profileRefreshOptions: Pick<
+    RefreshOptions,
+    "threshold" | "days" | "limitMessages" | "model" | "minNewMessages"
+  >;
   // Чати, де оновлення профілів уже йде: другий запит поспіль не запускаємо.
   profileRefreshInProgress: Set<number>;
   // Коли адмін чату востаннє оновлював профілі: раз на добу. У памʼяті — після
@@ -486,12 +489,15 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
           );
           const parts = [
             r.processed === 0
-              ? "Оновлювати нема кого: постійних учасників не набралось."
+              ? r.unchanged > 0
+                ? "Оновлювати нема що: з минулого разу майже нічого нового."
+                : "Оновлювати нема кого: постійних учасників не набралось."
               : `Оновила профілі: ${r.processed}.`,
           ];
           if (r.failed > 0) parts.push(`Не вийшло: ${r.failed}.`);
           if (r.skipped > 0) parts.push(`Пропустила (просили не профайлити): ${r.skipped}.`);
           if (r.filtered > 0) parts.push(`Відкинула через OPSEC: ${r.filtered}.`);
+          if (r.unchanged > 0) parts.push(`Без змін: ${r.unchanged}.`);
           if (ids.length > 0) parts.push(`Хендлів знаю: ${handles.withHandle} з ${ids.length}.`);
           // Рахунок — лише адміну бота, це його гроші.
           if (r.processed > 0 && action.byOwner) {

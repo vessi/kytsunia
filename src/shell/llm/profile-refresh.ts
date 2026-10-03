@@ -67,6 +67,10 @@ export type RefreshOptions = {
   chatId?: number;
   // Один користувач: поріг не застосовується, оновлюємо що є.
   userId?: number;
+  // Пропускати тих, у кого з часу профілю менше за стільки нових повідомлень:
+  // профіль від них не змінився б. 0 або force — оновлювати всіх.
+  minNewMessages?: number;
+  force?: boolean;
   // Не зберігати, лише віддати текст у onProfile (для скрипта з --dry-run).
   dryRun?: boolean;
   onProfile?: (cand: RefreshCandidate, profile: string, costUsd: number) => void;
@@ -82,6 +86,8 @@ export type RefreshResult = {
   skipped: number;
   // Відкинуті запобіжником OPSEC після повторної спроби.
   filtered: number;
+  // Пропущені, бо з часу профілю майже нічого нового.
+  unchanged: number;
   totalCostUsd: number;
 };
 
@@ -168,7 +174,20 @@ export async function refreshProfiles(
   const cutoffTs = Date.now() - opts.days * 24 * 3600 * 1000;
   const optedOut = deps.optedOutUserIds();
   const all = findCandidates(deps.db, opts, cutoffTs).filter((c) => c.userId !== deps.botUserId);
-  const candidates = all.filter((c) => !optedOut.has(c.userId));
+  const eligible = all.filter((c) => !optedOut.has(c.userId));
+  // Профіль є і нового з того часу мало — переписувати нема за що.
+  const newSinceStmt = deps.db.prepare(
+    `SELECT COUNT(*) as n FROM messages
+     WHERE sender_id = ? AND chat_id = ? AND ts > ? AND text != ''`,
+  );
+  const minNew = opts.force ? 0 : (opts.minNewMessages ?? 0);
+  const candidates = eligible.filter((c) => {
+    if (minNew <= 0) return true;
+    const existing = deps.regularsStore.get(c.userId, c.chatId);
+    if (!existing) return true;
+    const { n } = newSinceStmt.get(c.userId, c.chatId, existing.generatedAt) as { n: number };
+    return n >= minNew;
+  });
   // Профіль бота міг зʼявитись до цієї перевірки — прибираємо, щоб не висів у контексті.
   if (deps.botUserId !== undefined && opts.chatId !== undefined && !opts.dryRun) {
     if (deps.regularsStore.remove(deps.botUserId, opts.chatId)) {
@@ -178,8 +197,9 @@ export async function refreshProfiles(
   const result: RefreshResult = {
     processed: 0,
     failed: 0,
-    skipped: all.length - candidates.length,
+    skipped: all.length - eligible.length,
     filtered: 0,
+    unchanged: eligible.length - candidates.length,
     totalCostUsd: 0,
   };
   deps.log.info(

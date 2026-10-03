@@ -93,9 +93,16 @@ describe("resolveCount", () => {
 });
 
 describe("renderTranscript", () => {
-  it("prefixes each line with Kyiv time and the sender name", () => {
+  it("stamps Kyiv time only when the hour changes", () => {
     // 09:30 UTC = 12:30 у Києві (літній час).
-    expect(renderTranscript([row()])).toContain("[12:30] Andriy: привіт");
+    const text = renderTranscript([
+      row(),
+      row({ ts: Date.UTC(2026, 8, 9, 9, 45), text: "та ж година" }),
+      row({ ts: Date.UTC(2026, 8, 9, 10, 5), text: "нова година" }),
+    ]);
+    expect(text).toContain("[12:30] Andriy: привіт");
+    expect(text).toContain("\nAndriy: та ж година");
+    expect(text).toContain("[13:05] Andriy: нова година");
   });
 
   it("emits a day separator once per calendar day", () => {

@@ -318,6 +318,7 @@ bot.on("message", async (ctx) => {
           days: config.KYTSUNIA_PROFILE_DAYS,
           limitMessages: config.KYTSUNIA_PROFILE_LIMIT_MESSAGES,
           model: config.KYTSUNIA_PROFILE_MODEL,
+          minNewMessages: config.KYTSUNIA_PROFILE_MIN_NEW,
         },
         profileRefreshInProgress,
         profileRefreshByChatAdminAt,

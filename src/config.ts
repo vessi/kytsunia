@@ -74,6 +74,8 @@ const envSchema = z.object({
   KYTSUNIA_PROFILE_DAYS: envValue(z.coerce.number().int().positive().default(30)),
   // Скільки останніх повідомлень людини йде в модель.
   KYTSUNIA_PROFILE_LIMIT_MESSAGES: envValue(z.coerce.number().int().positive().default(200)),
+  // Не переписувати профіль, якщо з його часу менше за стільки нових повідомлень.
+  KYTSUNIA_PROFILE_MIN_NEW: envValue(z.coerce.number().int().nonnegative().default(30)),
   // Влазити в розмову без звернення. Шанс на повідомлення задається на чат
   // командою («Кицюня, влазь 5%»); тут — дефолт для голого «влазь» і стеля,
   // щоб описка не зробила з неї базіку. Далі — не частіше за MIN_GAP, не
