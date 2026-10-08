@@ -118,6 +118,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     instructionStore: { list: vi.fn(() => []), add: vi.fn(), remove: vi.fn() },
     isIgnored: () => false,
     usernameOf: () => null,
+    abuseGuard: { check: vi.fn(async () => "ok" as const) },
     rng: () => 0,
     log: silentLog,
     visionEnabled: true,
@@ -1304,6 +1305,48 @@ describe("invokeLlmReply: output budget and long replies", () => {
       messageId: 102,
       text: "б".repeat(3000),
     });
+  });
+});
+
+describe("invokeLlmReply: abuse guard", () => {
+  const opened: InvokeLlmDeps[] = [];
+
+  afterEach(() => {
+    for (const d of opened.splice(0)) d.db.close();
+  });
+
+  it("checks every addressed message before the model and stops on a ban", async () => {
+    const calls: unknown[] = [];
+    const client: LlmClient = {
+      reply: async (system) => {
+        calls.push(system);
+        return {
+          text: "ок",
+          inputTokens: 1,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        };
+      },
+    };
+    const check = vi.fn(async () => "banned" as const);
+    const d = makeBaseDeps({ llmClient: client, abuseGuard: { check } });
+    opened.push(d);
+    const { ctx, reply } = makeCtx({ text: "Кицюня, ти жалюгідна купа" });
+    await invokeLlmReply(ctx, 999, d);
+
+    expect(check).toHaveBeenCalledWith(
+      ctx,
+      expect.objectContaining({
+        chatId: 1,
+        userId: 7,
+        msgId: 999,
+        text: "Кицюня, ти жалюгідна купа",
+      }),
+    );
+    expect(calls).toHaveLength(0);
+    expect(reply).not.toHaveBeenCalled();
+    expect(d.llmCallStore.record).not.toHaveBeenCalled();
   });
 });
 

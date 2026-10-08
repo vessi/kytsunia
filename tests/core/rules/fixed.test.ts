@@ -1084,3 +1084,79 @@ describe("fixedRules: chime_in", () => {
     expect(run("Кицюня, влазь", 301)).toEqual([]);
   });
 });
+
+describe("fixedRules: list_abuse / forgive_abuse", () => {
+  const admin = buildState({ policy: { adminUserId: 300 } });
+
+  function run(name: string, input: Partial<MessageInput>) {
+    const rule = findRule(name);
+    const full = buildInput(input);
+    const m = rule.pattern.exec(full.text);
+    if (!m) throw new Error(`no match: ${full.text}`);
+    return rule.produce(full, m, admin);
+  }
+
+  it("lists strikes for the bot owner only", () => {
+    expect(run("list_abuse", { text: "Кицюня, хто абʼюзить?" })).toEqual([
+      { kind: "list_abuse", replyTo: 100 },
+    ]);
+    expect(run("list_abuse", { text: "Кицюня, хто аб'юзить", senderId: 301 })).toEqual([]);
+  });
+
+  it("forgives the author of the replied-to message, owner only", () => {
+    const reply = { messageId: 5, authorId: 42, authorName: "Troll" };
+    expect(run("forgive_abuse", { text: "Кицюня, пробач", replyTo: reply })).toEqual([
+      { kind: "forgive_abuse", replyTo: 100, userId: 42, userName: "Troll" },
+    ]);
+    expect(run("forgive_abuse", { text: "Кицюня, пробач" })).toEqual([
+      { kind: "reply_text", text: "Кого?", replyTo: 100 },
+    ]);
+    expect(run("forgive_abuse", { text: "Кицюня, пробач", senderId: 301, replyTo: reply })).toEqual(
+      [],
+    );
+  });
+});
+
+describe("fixedRules: announce / set_announce", () => {
+  const admin = buildState({ policy: { adminUserId: 300 } });
+
+  function run(name: string, input: Partial<MessageInput>) {
+    const rule = findRule(name);
+    const full = buildInput(input);
+    const m = rule.pattern.exec(full.text);
+    if (!m) throw new Error(`no match: ${full.text}`);
+    return rule.produce(full, m, admin);
+  }
+
+  it("announces as is or in persona, with multi-line text or the replied-to message", () => {
+    expect(run("announce", { text: "Кицюня, оголоси: Перше.\nДруге." })).toEqual([
+      { kind: "announce", replyTo: 100, text: "Перше.\nДруге.", inPersona: false },
+    ]);
+    expect(run("announce", { text: "Кицюня, оголоси своїми словами: є новини" })).toEqual([
+      { kind: "announce", replyTo: 100, text: "є новини", inPersona: true },
+    ]);
+    expect(
+      run("announce", {
+        text: "Кицюня, оголоси",
+        replyTo: { messageId: 5, authorId: 300, authorName: "Admin", text: "з реплаю" },
+      }),
+    ).toEqual([{ kind: "announce", replyTo: 100, text: "з реплаю", inPersona: false }]);
+    expect(run("announce", { text: "Кицюня, оголоси" })).toEqual([
+      { kind: "reply_text", text: "Що оголосити?", replyTo: 100 },
+    ]);
+  });
+
+  it("toggles announcements for the chat", () => {
+    expect(run("set_announce", { text: "Кицюня, без оголошень" })).toEqual([
+      { kind: "set_announce", replyTo: 100, chatId: 200, on: false },
+    ]);
+    expect(run("set_announce", { text: "Кицюня, з оголошеннями!" })).toEqual([
+      { kind: "set_announce", replyTo: 100, chatId: 200, on: true },
+    ]);
+  });
+
+  it("is silently ignored for non-admins", () => {
+    expect(run("announce", { text: "Кицюня, оголоси: x", senderId: 301 })).toEqual([]);
+    expect(run("set_announce", { text: "Кицюня, без оголошень", senderId: 301 })).toEqual([]);
+  });
+});

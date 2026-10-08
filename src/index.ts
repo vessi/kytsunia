@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
 import { Bot } from "grammy";
 import { loadConfig } from "./config.js";
 import { match } from "./core/matcher.js";
 import type { State } from "./core/types.js";
+import { changelogFor, readChangelog } from "./shell/changelog.js";
 import { makeChatAdminsCache } from "./shell/chat-admins.js";
 import { loadInsults } from "./shell/insults.js";
+import { makeAbuseGuard } from "./shell/llm/abuse-guard.js";
+import { announce } from "./shell/llm/announce.js";
 import { makeLlmClient } from "./shell/llm/anthropic.js";
 import { invokeChime, makeChimeScheduler } from "./shell/llm/chime.js";
 import { makePhotoDescriber } from "./shell/llm/describe-photo.js";
@@ -13,7 +17,9 @@ import { buildPersonaPrompt, DIGEST_PROMPT, SEARCH_PROMPT } from "./shell/llm/pe
 import type { InvokeRosterDeps } from "./shell/llm/roster.js";
 import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
+import { makeAbuseStore } from "./shell/storage/abuse.js";
 import { makeChatSettingsStore } from "./shell/storage/chat-settings.js";
+import { makeChatsStore, makeMetaStore } from "./shell/storage/chats.js";
 import { openDb } from "./shell/storage/db.js";
 import { makeDigestStore } from "./shell/storage/digests.js";
 import { makeIgnoredUsersStore } from "./shell/storage/ignored.js";
@@ -29,6 +35,8 @@ import { makeUsersStore } from "./shell/storage/users.js";
 import { executeActions, toMessageInput, withoutPhotos } from "./shell/telegram.js";
 import { startTyping } from "./shell/typing.js";
 
+const APP_VERSION = (JSON.parse(readFileSync("package.json", "utf-8")) as { version: string })
+  .version;
 const config = loadConfig();
 const log = createLogger(config);
 
@@ -43,6 +51,9 @@ const instructionStore = makeInstructionStore(db);
 const ignoredUsersStore = makeIgnoredUsersStore(db);
 const chatSettings = makeChatSettingsStore(db);
 const digestStore = makeDigestStore(db);
+const abuseStore = makeAbuseStore(db);
+const chatsStore = makeChatsStore(db);
+const metaStore = makeMetaStore(db);
 const profileRefreshInProgress = new Set<number>();
 const profileRefreshByChatAdminAt = new Map<number, number>();
 const chatsOverviewInProgress = { running: false };
@@ -73,6 +84,19 @@ const photoFetcher = makePhotoFetcher({
   api: bot.api,
   botToken: config.BOT_TOKEN,
   cache: photoCacheStore,
+});
+
+const abuseGuard = makeAbuseGuard({
+  enabled: config.KYTSUNIA_ABUSE_ENABLED,
+  llmClient,
+  llmCallStore,
+  store: abuseStore,
+  model: config.KYTSUNIA_ABUSE_MODEL,
+  weekAt: config.KYTSUNIA_ABUSE_WEEK_AT,
+  foreverAt: config.KYTSUNIA_ABUSE_FOREVER_AT,
+  banMs: config.KYTSUNIA_ABUSE_BAN_DAYS * 86_400_000,
+  now: () => Date.now(),
+  log,
 });
 
 const describePhoto = makePhotoDescriber({
@@ -138,8 +162,11 @@ const invokeLlmDeps: InvokeLlmDeps = {
   recentContextSize: 10,
   regularsStore,
   instructionStore,
-  isIgnored: (userId, chatId) => ignoredUsersStore.isIgnored(userId, chatId),
+  isIgnored: (userId, chatId) =>
+    ignoredUsersStore.isIgnored(userId, chatId) ||
+    abuseStore.activeBan(userId, Date.now()) !== null,
   usernameOf: (userId) => usersStore.usernameOf(userId),
+  abuseGuard,
   rng: Math.random,
   log,
   visionEnabled: config.KYTSUNIA_VISION_ENABLED,
@@ -205,6 +232,20 @@ const invokeRosterDeps: InvokeRosterDeps = {
   cacheTtl: config.KYTSUNIA_CACHE_TTL,
 };
 
+const announceDeps = {
+  llmClient,
+  llmCallStore,
+  chats: chatsStore,
+  chatSettings,
+  model: config.LLM_MODEL,
+  digestModel: config.KYTSUNIA_DIGEST_MODEL,
+  persona: personaFor,
+  cacheTtl: config.KYTSUNIA_CACHE_TTL,
+  botUserId,
+  botName,
+  log,
+};
+
 log.info(
   {
     enabled: config.KYTSUNIA_DIGEST_ENABLED,
@@ -231,6 +272,12 @@ bot.on("message", async (ctx) => {
   const input = toMessageInput(ctx);
   if (!input) return;
 
+  // Реєстр чатів: де бот зараз є, з назвою — для оголошень і «опиши чати».
+  if (input.chatId < 0) {
+    const chat = ctx.chat;
+    chatsStore.seen(input.chatId, chat && "title" in chat ? (chat.title ?? null) : null);
+  }
+
   // Хендли: з автора і з того, кому відповіли — щоб знати й тих, хто давно мовчить.
   if (input.senderId) {
     usersStore.upsert({
@@ -249,9 +296,10 @@ bot.on("message", async (ctx) => {
 
   // Текст ігнорованого лишається в базі, щоб розмова не втрачала людину, а
   // от його фото моделі бачити не треба — посилання на них не зберігаємо.
-  appendMessage(
-    ignoredUsersStore.isIgnored(input.senderId, input.chatId) ? withoutPhotos(input) : input,
-  );
+  const silenced =
+    ignoredUsersStore.isIgnored(input.senderId, input.chatId) ||
+    abuseStore.activeBan(input.senderId, Date.now()) !== null;
+  appendMessage(silenced ? withoutPhotos(input) : input);
 
   log.debug(
     {
@@ -278,9 +326,11 @@ bot.on("message", async (ctx) => {
         : {}),
     },
     optedOutUserIds: new Set(optOutsStore.list()),
+    // Забанені за абʼюз — той самий режим, що ігноровані: лише «забудь мене».
     ignoredUserIds: new Set([
       ...ignoredUsersStore.listGlobal().map((u) => u.userId),
       ...ignoredUsersStore.listInChat(input.chatId).map((u) => u.userId),
+      ...abuseStore.bannedUserIds(Date.now()),
     ]),
   };
 
@@ -332,6 +382,8 @@ bot.on("message", async (ctx) => {
           log,
         },
         chatsOverviewInProgress,
+        abuseStore,
+        announce: announceDeps,
         chimeDefaultChance: config.KYTSUNIA_CHIME_DEFAULT_CHANCE,
         chimeMaxChance: config.KYTSUNIA_CHIME_MAX_CHANCE,
         digestMaxCount: config.KYTSUNIA_DIGEST_MAX_COUNT,
@@ -376,6 +428,21 @@ bot.on("message", async (ctx) => {
   }
 });
 
+// Бота додали або видалили з чату: оновлюємо реєстр, щоб оголошення не летіли
+// в чати, звідки його викинули.
+bot.on("my_chat_member", (ctx) => {
+  const upd = ctx.myChatMember;
+  const status = upd.new_chat_member.status;
+  const title = "title" in upd.chat ? (upd.chat.title ?? null) : null;
+  if (status === "left" || status === "kicked") {
+    chatsStore.left(upd.chat.id);
+    log.info({ chatId: upd.chat.id, title }, "left chat");
+  } else if (upd.chat.id < 0) {
+    chatsStore.seen(upd.chat.id, title);
+    log.info({ chatId: upd.chat.id, title, status }, "joined chat");
+  }
+});
+
 // Правка тексту чи підпису. Правила заново не проганяємо: відредаговане
 // «Кицюня, ...» не має викликати її вдруге. Оновлюємо лише збережений текст,
 // щоб контекст і дайджест бачили актуальну версію.
@@ -400,6 +467,28 @@ const shutdown = (signal: string) => {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+// Нова версія після деплою: один раз розповісти чатам, що змінилось, своїми
+// словами. Лише якщо версія інша за записану і в CHANGELOG.md є її секція.
+// Версію записуємо в будь-якому разі, щоб рестарт без змін нічого не казав.
+{
+  const lastAnnounced = metaStore.get("announced_version");
+  if (lastAnnounced !== APP_VERSION) {
+    const notes = changelogFor(readChangelog(), APP_VERSION);
+    // Версію записуємо завжди: увімкнений пізніше прапорець не має оголошувати старе.
+    metaStore.set("announced_version", APP_VERSION);
+    if (!config.KYTSUNIA_ANNOUNCE_ON_DEPLOY) {
+      log.info({ version: APP_VERSION }, "release announce disabled");
+    } else if (notes) {
+      log.info({ version: APP_VERSION }, "announcing release");
+      void announce({ ...announceDeps, api: bot.api }, notes, true).catch((err) =>
+        log.error({ err: err instanceof Error ? err.message : err }, "release announce failed"),
+      );
+    } else {
+      log.info({ version: APP_VERSION }, "release has no changelog entry, not announced");
+    }
+  }
+}
 
 try {
   await bot.start({

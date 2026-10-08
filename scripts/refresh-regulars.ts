@@ -20,6 +20,7 @@ const { values } = parseArgs({
     chat: { type: "string" },
     model: { type: "string" },
     "dry-run": { type: "boolean", default: false },
+    force: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -36,6 +37,7 @@ Options (defaults come from KYTSUNIA_PROFILE_* env):
   --chat <chat_id>      Refresh single chat only
   --model <name>        LLM model
   --dry-run             Print profiles without saving
+  --force               Refresh even profiles with few new messages since
   -h, --help            Show this help
 
 Profiles are per-(user, chat). The same user in different chats gets
@@ -63,6 +65,8 @@ const opts = {
   ...(values.user ? { userId: Number.parseInt(values.user, 10) } : {}),
   ...(values.chat ? { chatId: Number.parseInt(values.chat, 10) } : {}),
   dryRun: values["dry-run"] ?? false,
+  force: values.force ?? false,
+  minNewMessages: config.KYTSUNIA_PROFILE_MIN_NEW,
 };
 
 log.info(opts, "refresh-regulars starting");

@@ -57,6 +57,13 @@ export type Action =
   | { kind: "invoke_digest"; replyTo: number; count?: number }
   // Явний пошук. query порожній, коли шукати треба за повідомленням чи фото, на яке відповіли.
   | { kind: "invoke_web_search"; replyTo: number; query: string }
+  // Оголошення в усі чати: текст як є або переказ моделлю в персоні кожного чату.
+  | { kind: "announce"; replyTo: number; text: string; inPersona: boolean }
+  // Чи отримує цей чат оголошення.
+  | { kind: "set_announce"; replyTo: number; chatId: number; on: boolean }
+  // Абʼюз: список ударів і банів; «пробач» у відповідь скидає все для людини.
+  | { kind: "list_abuse"; replyTo: number }
+  | { kind: "forgive_abuse"; replyTo: number; userId: number; userName: string }
   // Адмінський перемикач «влазити в розмову без звернення» для чату.
   // chance — 0..1; shell клампить до стелі з конфіга.
   | { kind: "set_chime_in"; replyTo: number; chatId: number; chance: number }

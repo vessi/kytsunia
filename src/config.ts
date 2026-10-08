@@ -88,6 +88,26 @@ const envSchema = z.object({
   KYTSUNIA_CHIME_QUIET_TO: envValue(z.coerce.number().int().min(0).max(23).default(8)),
   // Скільки останніх повідомлень модель бачить, вирішуючи, чи влазити.
   KYTSUNIA_CHIME_CONTEXT: envValue(z.coerce.number().int().positive().default(100)),
+  // Після деплою з новою версією і записом у CHANGELOG.md — оголосити чатам.
+  // За замовчуванням вимкнено: адмін вмикає в .env, коли реліз того вартий.
+  KYTSUNIA_ANNOUNCE_ON_DEPLOY: envValue(
+    z
+      .string()
+      .default("false")
+      .transform((v) => v === "true" || v === "1"),
+  ),
+  // Абʼюз щодо бота: класифікатор на кожне звернення, удари й бани.
+  KYTSUNIA_ABUSE_ENABLED: envValue(
+    z
+      .string()
+      .default("true")
+      .transform((v) => v === "true" || v === "1"),
+  ),
+  KYTSUNIA_ABUSE_MODEL: envValue(z.string().default("claude-haiku-4-5")),
+  // На якому ударі — тиждень, на якому — назавжди.
+  KYTSUNIA_ABUSE_WEEK_AT: envValue(z.coerce.number().int().positive().default(3)),
+  KYTSUNIA_ABUSE_FOREVER_AT: envValue(z.coerce.number().int().positive().default(5)),
+  KYTSUNIA_ABUSE_BAN_DAYS: envValue(z.coerce.number().int().positive().default(7)),
   // Життя prompt-кешу: 5m або 1h. Година дорожча в записі (2x проти 1.25x), але
   // звернення після паузи в 5–60 хв читають кеш замість писати заново.
   KYTSUNIA_CACHE_TTL: envValue(z.enum(["5m", "1h"]).default("1h")),

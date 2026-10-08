@@ -12,6 +12,7 @@ import {
 } from "../storage/messages.js";
 import type { RegularsStore } from "../storage/regulars.js";
 import type { TypingStarter } from "../typing.js";
+import type { AbuseGuard } from "./abuse-guard.js";
 import { type CacheTtl, type LlmClient, type ReplySource, webSearchTool } from "./anthropic.js";
 import { buildLlmRequest, type RecentMessage } from "./context.js";
 import type { PhotoDescriber } from "./describe-photo.js";
@@ -44,6 +45,8 @@ export type InvokeLlmDeps = {
   isIgnored: (userId: number, chatId: number) => boolean;
   // @username за user_id, щоб модель звʼязувала хендли з іменами.
   usernameOf: (userId: number) => string | null;
+  // Класифікатор абʼюзу: на третьому ударі — тиждень мовчання, на пʼятому — назавжди.
+  abuseGuard: AbuseGuard;
   rng: () => number;
   log: Logger;
   // Бюджет вихідних токенів відповіді, разом із роздумами моделі.
@@ -259,6 +262,16 @@ export async function invokeLlmReply(
     await ctx.reply("Пошук зараз вимкнений.", { reply_to_message_id: replyTo });
     return;
   }
+
+  // 0. Абʼюз. Перевіряємо до лімітів і до моделі: бан — це відповідь сама по собі.
+  const verdict = await deps.abuseGuard.check(ctx, {
+    chatId,
+    userId,
+    userName,
+    msgId: replyTo,
+    text: ctx.message?.text ?? ctx.message?.caption ?? "",
+  });
+  if (verdict === "banned") return;
 
   const baseRecord = {
     ts: Date.now(),

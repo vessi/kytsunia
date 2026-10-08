@@ -1,6 +1,7 @@
 import { type Context, InputFile } from "grammy";
 import type { Action, MessageInput, MessageKind } from "../core/types.js";
 import { replyInChunks } from "./chunks.js";
+import { type AnnounceDeps, announce } from "./llm/announce.js";
 import { type ChatsOverviewDeps, describeChats, renderOverview } from "./llm/chats-overview.js";
 import type { InvokeDigestDeps } from "./llm/digest.js";
 import { invokeDigest } from "./llm/digest.js";
@@ -13,6 +14,7 @@ import { refreshProfiles } from "./llm/profile-refresh.js";
 import type { InvokeRosterDeps } from "./llm/roster.js";
 import { invokeRoster } from "./llm/roster.js";
 import { syncUsernames } from "./llm/sync-usernames.js";
+import type { AbuseStore } from "./storage/abuse.js";
 import type { ChatSettingsStore } from "./storage/chat-settings.js";
 import type { IgnoredUsersStore } from "./storage/ignored.js";
 import type { InstructionStore } from "./storage/instructions.js";
@@ -55,6 +57,8 @@ export type ExecuteDeps = {
   chatsOverviewInProgress: { running: boolean };
   chimeDefaultChance: number;
   chimeMaxChance: number;
+  abuseStore: AbuseStore;
+  announce: Omit<AnnounceDeps, "api">;
   usersStore: UsersStore;
   profileRefreshOptions: Pick<
     RefreshOptions,
@@ -398,8 +402,74 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
         if (global.length > 0) lines.push("Скрізь:", ...global);
       }
       if (inChat.length > 0) lines.push("У цьому чаті:", ...inChat);
+      if (action.scope === "global") {
+        const now = Date.now();
+        const banned = deps.abuseStore
+          .summary()
+          .filter((r) => r.ban && (r.ban.until === null || r.ban.until > now))
+          .map((r) => `${r.userName || "?"} (${r.userId})`);
+        if (banned.length > 0) lines.push("За абʼюз:", ...banned);
+      }
       const text = lines.length === 0 ? "Нікого не ігнорую." : lines.join("\n");
       await ctx.reply(text, { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "announce": {
+      const chats = deps.announce.chats.listActive().filter((c) => c.announce).length;
+      if (chats === 0) {
+        await ctx.reply("Нема куди: жодного чату з оголошеннями.", {
+          reply_to_message_id: action.replyTo,
+        });
+        return;
+      }
+      await ctx.reply(
+        action.inPersona
+          ? `Переказую в ${chats} чатах, це трохи часу.`
+          : `Надсилаю в ${chats} чатах.`,
+        { reply_to_message_id: action.replyTo },
+      );
+      const r = await announce({ ...deps.announce, api: ctx.api }, action.text, action.inPersona);
+      const parts = [`Оголосила в ${r.sent}.`];
+      if (r.failed > 0) parts.push(`Не вийшло: ${r.failed}.`);
+      if (r.skipped > 0) parts.push(`Без оголошень: ${r.skipped}.`);
+      if (action.inPersona && r.sent > 0) parts.push(`Коштувало $${r.costUsd.toFixed(3)}.`);
+      await ctx.reply(parts.join(" "), { reply_to_message_id: action.replyTo });
+      return;
+    }
+    case "set_announce": {
+      deps.announce.chats.setAnnounce(action.chatId, action.on);
+      await ctx.reply(action.on ? "Добре, тут оголошую." : "Гаразд, тут без оголошень.", {
+        reply_to_message_id: action.replyTo,
+      });
+      return;
+    }
+    case "list_abuse": {
+      const now = Date.now();
+      const rows = deps.abuseStore.summary();
+      const text =
+        rows.length === 0
+          ? "Поки ніхто не нарвався."
+          : rows
+              .map((r) => {
+                const name = r.userName || String(r.userId);
+                const ban =
+                  r.ban && (r.ban.until === null || r.ban.until > now)
+                    ? r.ban.until === null
+                      ? ", бан назавжди"
+                      : `, бан до ${formatKyivDate(r.ban.until)}`
+                    : "";
+                return `${name} (${r.userId}): ${r.strikes}, останній ${formatKyivDate(r.lastTs)}${ban}`;
+              })
+              .join("\n");
+      await replyInChunks(ctx, text, action.replyTo);
+      return;
+    }
+    case "forgive_abuse": {
+      const had = deps.abuseStore.forgive(action.userId);
+      const name = action.userName || String(action.userId);
+      await ctx.reply(had ? `Гаразд, ${name}, чистий аркуш.` : `${name} і так нічого не винен.`, {
+        reply_to_message_id: action.replyTo,
+      });
       return;
     }
     case "set_chime_in": {

@@ -452,6 +452,64 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, оголоси: текст» — як є; «Кицюня, оголоси своїми словами: текст»
+    // — переказ у персоні кожного чату. Багаторядковий текст; без тексту —
+    // повідомлення, на яке відповіли. Admin only.
+    name: "announce",
+    pattern: /(К|к)ицюн(я|ю), оголоси( своїми словами)?(?:[\s,:!?.]+([\s\S]*))?$/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const typed = match[4]?.trim() ?? "";
+      const text = typed || input.replyTo?.text?.trim() || "";
+      if (!text) return [{ kind: "reply_text", text: "Що оголосити?", replyTo: input.messageId }];
+      return [{ kind: "announce", replyTo: input.messageId, text, inPersona: Boolean(match[3]) }];
+    },
+  },
+  {
+    // «Кицюня, без оголошень» / «Кицюня, з оголошеннями» — на поточний чат. Admin only.
+    name: "set_announce",
+    pattern: /(К|к)ицюн(я|ю), (без оголошень|з оголошеннями)(?:[!?.\s,]|$)/,
+    produce: (input, match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      return [
+        {
+          kind: "set_announce",
+          replyTo: input.messageId,
+          chatId: input.chatId,
+          on: match[3] === "з оголошеннями",
+        },
+      ];
+    },
+  },
+  {
+    // «Кицюня, хто абʼюзить?» — удари й бани. Тільки адмін бота: відповідальність
+    // перед Anthropic на власнику акаунта, тож і право прощати — у нього.
+    name: "list_abuse",
+    pattern: /(К|к)ицюн(я|ю), хто аб(ʼ|')юзить\??/,
+    produce: (input, _match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      return [{ kind: "list_abuse", replyTo: input.messageId }];
+    },
+  },
+  {
+    // «Кицюня, пробач» у відповідь на повідомлення людини: стерти удари й бан.
+    name: "forgive_abuse",
+    pattern: /(К|к)ицюн(я|ю), пробач(?:[!?.\s,]|$)/,
+    produce: (input, _match, state) => {
+      if (state.policy.adminUserId !== input.senderId) return [];
+      const target = input.replyTo;
+      if (!target) return [{ kind: "reply_text", text: "Кого?", replyTo: input.messageId }];
+      return [
+        {
+          kind: "forgive_abuse",
+          replyTo: input.messageId,
+          userId: target.authorId,
+          userName: target.authorName,
+        },
+      ];
+    },
+  },
+  {
     // «Кицюня, влазь» (дефолтний шанс), «Кицюня, влазь 5%», «Кицюня, не
     // влазь», «Кицюня, влазиш?». Admin only, на поточний чат. Без відсотка
     // chance = -1: shell підставить дефолт із конфіга.
