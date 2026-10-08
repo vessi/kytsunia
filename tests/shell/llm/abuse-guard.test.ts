@@ -7,6 +7,7 @@ import {
   type AbuseGuardDeps,
   makeAbuseGuard,
   parseVerdict,
+  renderAbuseInput,
 } from "../../../src/shell/llm/abuse-guard.js";
 import type { LlmClient, LlmReply } from "../../../src/shell/llm/anthropic.js";
 import { makeAbuseStore } from "../../../src/shell/storage/abuse.js";
@@ -28,6 +29,23 @@ describe("parseVerdict", () => {
       reason: "Звичайний підкол.",
     });
     expect(parseVerdict("OK")).toEqual({ abuse: false, reason: "OK" });
+  });
+});
+
+describe("renderAbuseInput", () => {
+  it("names the bot as the reply target and handles a bare message", () => {
+    const text = renderAbuseInput({
+      chatId: -1,
+      userId: 1,
+      userName: "A",
+      msgId: 1,
+      text: "x",
+      replyTo: { authorName: "Кицюня", authorIsBot: true, text: "y" },
+    });
+    expect(text).toContain("відповіддю на репліку Кицюня (бот): «y»");
+    expect(
+      renderAbuseInput({ chatId: -1, userId: 1, userName: "A", msgId: 1, text: "x" }),
+    ).toContain("ні на що не відповідає");
   });
 });
 
@@ -108,10 +126,19 @@ describe("abuse guard", () => {
 
   const input = { chatId: -1, userId: 42, userName: "Troll", msgId: 10, text: "Кицюня, ти ніщо" };
 
-  it("sends the text to the classifier with the abuse prompt, weight 0", async () => {
+  it("sends the message with its reply target and recent lines, weight 0", async () => {
     const { guard, calls, ctx } = make(["OK\nПідкол."]);
-    expect(await guard.check(ctx, input)).toBe("ok");
-    expect(calls[0]).toEqual({ system: ABUSE_PROMPT, content: "Кицюня, ти ніщо" });
+    expect(
+      await guard.check(ctx, {
+        ...input,
+        replyTo: { authorName: "Оля", authorIsBot: false, text: "а ти що скажеш?" },
+        recent: ["Оля: а ти що скажеш?", "Андрій: нічого"],
+      }),
+    ).toBe("ok");
+    expect(calls[0]?.system).toBe(ABUSE_PROMPT);
+    expect(calls[0]?.content).toBe(
+      "Останні повідомлення чату:\nОля: а ти що скажеш?\nАндрій: нічого\n\nПовідомлення є відповіддю на репліку Оля: «а ти що скажеш?»\n\nПовідомлення від Troll: «Кицюня, ти ніщо»",
+    );
     const row = db.prepare("SELECT weight, status FROM llm_calls").get() as {
       weight: number;
       status: string;

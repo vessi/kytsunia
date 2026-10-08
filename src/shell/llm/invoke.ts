@@ -7,6 +7,7 @@ import type { InstructionStore } from "../storage/instructions.js";
 import type { LlmCallStore } from "../storage/llm-calls.js";
 import {
   getAnchoredRecentMessages,
+  getRecentMessages,
   type MessageAppender,
   type RecentMessageRow,
 } from "../storage/messages.js";
@@ -264,12 +265,25 @@ export async function invokeLlmReply(
   }
 
   // 0. Абʼюз. Перевіряємо до лімітів і до моделі: бан — це відповідь сама по собі.
+  //    Класифікатору даємо гілку й кілька останніх рядків: без них він не
+  //    відрізняє «тебе» до Кицюні від «тебе» до співрозмовника в треді.
+  const abuseReply = ctx.message?.reply_to_message;
   const verdict = await deps.abuseGuard.check(ctx, {
     chatId,
     userId,
     userName,
     msgId: replyTo,
     text: ctx.message?.text ?? ctx.message?.caption ?? "",
+    ...(abuseReply
+      ? {
+          replyTo: {
+            authorName: abuseReply.from?.first_name ?? "",
+            authorIsBot: abuseReply.from?.id === deps.botUserId,
+            text: abuseReply.text ?? abuseReply.caption ?? "",
+          },
+        }
+      : {}),
+    recent: getRecentMessages(deps.db, chatId, 5, replyTo).map((r) => `${r.senderName}: ${r.text}`),
   });
   if (verdict === "banned") return;
 
