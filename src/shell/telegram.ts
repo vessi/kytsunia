@@ -626,6 +626,12 @@ async function executeOne(action: Action, ctx: Context, deps: ExecuteDeps): Prom
       });
       return;
 
+    case "invoke_factcheck":
+      await invokeLlmReply(ctx, action.replyTo, deps.invokeLlmDeps, {
+        search: { query: action.claim, mode: "factcheck" },
+      });
+      return;
+
     case "invoke_digest":
       await invokeDigest(ctx, action.replyTo, action.count, deps.invokeDigestDeps);
       return;

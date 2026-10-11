@@ -57,6 +57,9 @@ export type Action =
   | { kind: "invoke_digest"; replyTo: number; count?: number }
   // Явний пошук. query порожній, коли шукати треба за повідомленням чи фото, на яке відповіли.
   | { kind: "invoke_web_search"; replyTo: number; query: string }
+  // Фактчек (роль Касандри): перевірка твердження через пошук. claim порожній,
+  // коли перевіряти треба повідомлення чи фото, на яке відповіли.
+  | { kind: "invoke_factcheck"; replyTo: number; claim: string }
   // Оголошення в усі чати: текст як є або переказ моделлю в персоні кожного чату.
   | { kind: "announce"; replyTo: number; text: string; inPersona: boolean }
   // Чи отримує цей чат оголошення.

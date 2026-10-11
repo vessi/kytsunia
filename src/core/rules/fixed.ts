@@ -231,6 +231,21 @@ export const fixedRules: FixedRule[] = [
     },
   },
   {
+    // «Кицюня, фактчек: Київ заснували 1500 років тому» або «Кицюня, фактчек»
+    // у відповідь на повідомлення чи фото. Той самий конвейєр, що й пошук,
+    // інший лише промпт — роль Касандри.
+    name: "factcheck",
+    pattern: /(К|к)ицюн(я|ю), фактчек(?:[\s,:!?.]+([\s\S]*))?$/,
+    produce: (input, match) => {
+      const typed = match[3]?.trim() ?? "";
+      const claim = typed || input.replyTo?.text?.trim() || "";
+      if (!claim && !input.replyTo) {
+        return [{ kind: "reply_text", text: "Що перевіряти?", replyTo: input.messageId }];
+      }
+      return [{ kind: "invoke_factcheck", replyTo: input.messageId, claim }];
+    },
+  },
+  {
     // «Кицюня, звіт» — за 7 днів, «Кицюня, звіт 30» — за 30. Admin only, тиха
     // ігнорація для інших, як і в say_in_chat. Роздільник після «звіт»
     // обовʼязковий, щоб не ловити «звітність».

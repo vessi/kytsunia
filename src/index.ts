@@ -13,7 +13,12 @@ import { invokeChime, makeChimeScheduler } from "./shell/llm/chime.js";
 import { makePhotoDescriber } from "./shell/llm/describe-photo.js";
 import type { InvokeDigestDeps } from "./shell/llm/digest.js";
 import type { InvokeLlmDeps } from "./shell/llm/invoke.js";
-import { buildPersonaPrompt, DIGEST_PROMPT, SEARCH_PROMPT } from "./shell/llm/persona.js";
+import {
+  buildPersonaPrompt,
+  DIGEST_PROMPT,
+  FACTCHECK_PROMPT,
+  SEARCH_PROMPT,
+} from "./shell/llm/persona.js";
 import type { InvokeRosterDeps } from "./shell/llm/roster.js";
 import { makePhotoFetcher } from "./shell/llm/telegram-photos.js";
 import { createLogger } from "./shell/logger.js";
@@ -187,6 +192,7 @@ const invokeLlmDeps: InvokeLlmDeps = {
   searchMaxUses: config.KYTSUNIA_SEARCH_MAX_USES,
   searchWeight: config.KYTSUNIA_SEARCH_WEIGHT,
   searchPrompt: SEARCH_PROMPT,
+  factcheckPrompt: FACTCHECK_PROMPT,
 };
 
 const invokeDigestDeps: InvokeDigestDeps = {

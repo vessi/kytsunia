@@ -78,11 +78,15 @@ export type InvokeLlmDeps = {
   searchMaxUses: number;
   searchWeight: number;
   searchPrompt: string;
+  factcheckPrompt: string;
 };
+
+export type SearchMode = "search" | "factcheck";
 
 export type InvokeLlmOptions = {
   // query порожній, коли шукати треба за повідомленням чи фото, на яке відповіли.
-  search?: { query: string };
+  // mode "factcheck" — той самий пошук, але з промптом Касандри.
+  search?: { query: string; mode?: SearchMode };
 };
 
 const RATE_LIMIT_REPLIES = [
@@ -251,10 +255,11 @@ export async function invokeLlmReply(
   const model = deps.chatSettings.getModel(chatId) ?? deps.model;
   const digestModel = deps.chatSettings.getDigestModel(chatId) ?? deps.digestModel;
   const search = options.search;
+  const factcheck = search?.mode === "factcheck";
   // При пошуку у відповідь на повідомлення сам тригер — просто «Кицюня, пошукай»,
   // а що шукати, лежить у query. Тому текст для моделі складаємо явно.
   const text = search?.query
-    ? `Кицюня, пошукай: ${search.query}`
+    ? `Кицюня, ${factcheck ? "фактчек" : "пошукай"}: ${search.query}`
     : (ctx.message?.text ?? ctx.message?.caption ?? "");
   // Відповідь з пошуком дорожча за звичайну, тож і в лімітах важить більше.
   const weight = search ? deps.searchWeight : 1;
@@ -433,7 +438,9 @@ export async function invokeLlmReply(
     // лишалась спільним кешем для всіх чатів. Промпт пошуку — у персону: у
     // пошукового запиту й так інший префікс через tools.
     const base = deps.persona(model, digestModel, deps.chatSettings.getPersona(chatId));
-    const persona = search ? `${base}\n\n${deps.searchPrompt}` : base;
+    const persona = search
+      ? `${base}\n\n${factcheck ? deps.factcheckPrompt : deps.searchPrompt}`
+      : base;
     const instructions = deps.instructionStore.list(chatId).map((i) => i.text);
     const { system, userMessage } = buildLlmRequest(
       {
@@ -501,9 +508,11 @@ export async function invokeLlmReply(
         reply.text.trim() ||
         (reply.stopReason === "refusal"
           ? "Про це не буду."
-          : search
-            ? "Нічого путнього не знайшла."
-            : "Загубила думку, спитай ще раз.");
+          : factcheck
+            ? "Не змогла перевірити: нічого не знайшла."
+            : search
+              ? "Нічого путнього не знайшла."
+              : "Загубила думку, спитай ще раз.");
       const sources = search ? (reply.sources ?? []).slice(0, MAX_SOURCES) : [];
       // Довга відповідь іде кількома повідомленнями, як дайджест. Джерела
       // дописуємо лише до останнього шматка й лише при надсиланні: в історію

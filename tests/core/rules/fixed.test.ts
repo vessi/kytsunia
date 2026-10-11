@@ -545,6 +545,46 @@ describe("fixedRules: web_search", () => {
   });
 });
 
+describe("fixedRules: factcheck", () => {
+  const rule = findRule("factcheck");
+
+  function produce(text: string, overrides: Partial<MessageInput> = {}) {
+    const m = rule.pattern.exec(text);
+    if (!m) throw new Error(`no match: ${text}`);
+    return rule.produce(buildInput({ text, ...overrides }), m, buildState());
+  }
+
+  const reply = { messageId: 50, authorId: 1, authorName: "Olha" };
+
+  it("takes the claim typed after «фактчек»", () => {
+    expect(produce("Кицюня, фактчек: Київ заснували 482 року")).toEqual([
+      { kind: "invoke_factcheck", replyTo: 100, claim: "Київ заснували 482 року" },
+    ]);
+  });
+
+  it("checks the replied message when nothing is typed", () => {
+    expect(produce("кицюню, фактчек", { replyTo: { ...reply, text: "Місяць — це сир" } })).toEqual([
+      { kind: "invoke_factcheck", replyTo: 100, claim: "Місяць — це сир" },
+    ]);
+  });
+
+  it("leaves the claim empty for a reply to a photo", () => {
+    expect(
+      produce("Кицюня, фактчек", { replyTo: { ...reply, photoFileId: "f", photoUniqueId: "u" } }),
+    ).toEqual([{ kind: "invoke_factcheck", replyTo: 100, claim: "" }]);
+  });
+
+  it("asks what to check when there is neither a claim nor a reply", () => {
+    expect(produce("Кицюня, фактчек")).toEqual([
+      { kind: "reply_text", text: "Що перевіряти?", replyTo: 100 },
+    ]);
+  });
+
+  it("does not match a longer word", () => {
+    expect(rule.pattern.test("Кицюня, фактчекер ти наш")).toBe(false);
+  });
+});
+
 describe("fixedRules: usage_report", () => {
   const rule = findRule("usage_report");
   const admin = buildState({ policy: { adminUserId: 300 } });

@@ -141,6 +141,7 @@ function makeBaseDeps(overrides: Partial<InvokeLlmDeps> = {}): InvokeLlmDeps {
     searchMaxUses: 3,
     searchWeight: 3,
     searchPrompt: "SEARCH",
+    factcheckPrompt: "FACTCHECK",
     ...overrides,
   };
 }
@@ -914,6 +915,21 @@ describe("invokeLlmReply: web search", () => {
     await invokeLlmReply(ctx, 999, searchDeps({ llmClient: llm.client }), SEARCH);
 
     expect(llm.calls[0]?.content).toBe("Andriy: Кицюня, пошукай: курс долара");
+  });
+
+  it("fact-check mode swaps the search prompt for the Cassandra one and names the mode", async () => {
+    const llm = makeSearchLlm();
+    const { ctx } = makeCtx({ text: "Кицюня, фактчек" });
+    const deps = searchDeps({ llmClient: llm.client, factcheckPrompt: "CASSANDRA" });
+    await invokeLlmReply(ctx, 999, deps, {
+      search: { query: "Київ заснували 482 року", mode: "factcheck" },
+    });
+
+    const system = llm.calls[0]?.system as Array<{ text: string }>;
+    expect(system[0]?.text).toBe("PERSONA\n\nCASSANDRA");
+    expect(llm.calls[0]?.content).toBe("Andriy: Кицюня, фактчек: Київ заснували 482 року");
+    expect(llm.calls[0]?.options?.tools?.[0]).toMatchObject({ type: "web_search_20250305" });
+    expect(deps.llmCallStore.record).toHaveBeenCalledWith(expect.objectContaining({ weight: 3 }));
   });
 
   it("keeps the trigger text when the query is empty", async () => {
